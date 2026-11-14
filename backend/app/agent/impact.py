@@ -21,14 +21,22 @@ def _commands(diagnosis: dict[str, Any] | None) -> list[str]:
     return [str(command) for command in (diagnosis or {}).get("commands") or []]
 
 
+def _normalise_deployment(name: str) -> str:
+    """Strip a ReplicaSet/pod suffix (``api-6f8b9c7d4-4kq2p`` → ``api``)."""
+    parts = name.rsplit("-", 2)
+    if len(parts) == 3 and not parts[2].isdigit():
+        return parts[0]
+    return name
+
+
 def _deployment(incident: dict[str, Any], commands: list[str]) -> str | None:
     for command in commands:
         for pattern in (_SET_RESOURCES, _SCALE):
             match = pattern.search(command)
             if match:
-                return match.group(1)
+                return _normalise_deployment(match.group(1))
     workload = str(incident.get("workload") or "").strip()
-    return workload or None
+    return _normalise_deployment(workload) if workload else None
 
 
 def _current_limit(incident: dict[str, Any], diagnosis: dict[str, Any]) -> str | None:
