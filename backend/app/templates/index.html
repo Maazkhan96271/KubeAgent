@@ -68,6 +68,31 @@
       .palette-panel { animation: none; }
       * { scroll-behavior: auto !important; }
     }
+    @keyframes trafficFlow { to { stroke-dashoffset: -28; } }
+    .topology-link {
+      stroke-dasharray: 5 7;
+      animation: trafficFlow 1.2s linear infinite;
+      will-change: stroke-dashoffset;
+    }
+    @keyframes podPulse {
+      0%, 100% { opacity: 0.9; transform: scale(1); }
+      50% { opacity: 0.25; transform: scale(1.05); }
+    }
+    .pod-ring-critical {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: podPulse 1.6s ease-in-out infinite;
+      will-change: transform, opacity;
+    }
+    .topology-pod {
+      cursor: pointer;
+      transform-box: fill-box;
+      transform-origin: center;
+      transition: transform 120ms ease-out;
+    }
+    .topology-pod:hover { transform: translateY(-2px); }
+    .topology-pod:focus-visible { outline: none; }
+    .topology-pod:focus-visible rect:first-of-type { stroke-width: 2.5; }
     @keyframes livePulse {
       0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); }
       70% { box-shadow: 0 0 0 5px rgba(52, 211, 153, 0); }
@@ -251,15 +276,20 @@
       </div>
     </section>
 
-    <!-- ---------- CENTER: LIVE REASONING STREAM ---------- -->
+    <!-- ---------- CENTER: TRACE + CLUSTER TOPOLOGY ---------- -->
     <section class="bg-sre-surface border border-sre-border rounded-lg flex flex-col overflow-hidden xl:col-span-6 min-h-[520px]">
-      <div class="border-b border-sre-border px-4 py-2 flex flex-wrap items-center justify-between gap-2 bg-slate-900/50">
-        <div class="flex items-center gap-2 text-[11px] font-mono">
-          <span class="px-2.5 py-1 bg-sky-500/20 text-sky-300 rounded font-bold border border-sky-500/30">🧠 Neural SRE Trace</span>
-          <span class="text-slate-500">stream target:</span>
-          <span id="stream-target" class="text-slate-400">no incident selected</span>
+      <div class="border-b border-sre-border px-3 py-2 flex flex-wrap items-center justify-between gap-2 bg-black/30">
+        <div class="flex flex-wrap items-center gap-1.5 text-[11px] font-mono" role="tablist">
+          <button id="tab-trace" role="tab" aria-selected="true"
+                  class="topology-tab rounded border border-sky-500/30 bg-sky-500/15 px-2.5 py-1 font-bold text-sky-300">🧠 Neural SRE Trace</button>
+          <button id="tab-topology" role="tab" aria-selected="false"
+                  class="topology-tab rounded border border-transparent px-2.5 py-1 text-slate-400 transition-colors hover:text-slate-200">🕸 Cluster Topology</button>
+          <span class="mx-0.5 text-slate-600">·</span>
+          <span class="text-slate-500">target</span>
+          <span id="stream-target" class="text-slate-400">none</span>
         </div>
         <div class="flex items-center gap-3 text-[10.5px] font-mono">
+          <span id="topology-summary" class="hidden text-slate-500"></span>
           <span class="text-slate-500">SSE</span>
           <button id="clear-terminal" title="Clear terminal" class="rounded border border-sre-border p-1 text-slate-500 transition hover:border-emerald-500/40 hover:text-emerald-300">
             <i data-lucide="eraser" class="h-3 w-3"></i>
@@ -267,26 +297,43 @@
         </div>
       </div>
 
-      <div class="scanline relative flex-1 overflow-hidden bg-[#060911]">
-        <div id="terminal" class="terminal-scroll absolute inset-0 overflow-y-auto p-4 font-mono text-[12px] leading-relaxed text-slate-300 space-y-1.5 select-text">
-          <div class="text-slate-500"><span class="text-emerald-500">$</span> kubeagent watch --namespace default</div>
-          <div class="text-slate-600">waiting for an incident stream…</div>
+      <div id="trace-panel" class="flex flex-1 flex-col overflow-hidden">
+        <div class="scanline relative flex-1 overflow-hidden bg-[#060911]">
+          <div id="terminal" class="terminal-scroll absolute inset-0 overflow-y-auto p-4 font-mono text-[12px] leading-relaxed text-slate-300 space-y-1.5 select-text">
+            <div class="text-slate-500"><span class="text-emerald-500">$</span> kubeagent watch --namespace default</div>
+            <div class="text-slate-600">waiting for an incident stream…</div>
+          </div>
         </div>
+
+        <form id="cli-form" class="border-t border-sre-border bg-black/40 px-3 py-2">
+          <div class="flex items-center gap-2 font-mono text-[11.5px]">
+            <span class="shrink-0 text-emerald-500">kubeagent@sre $</span>
+            <input id="cli-input"
+                   class="min-w-0 flex-1 bg-transparent text-slate-200 placeholder:text-slate-600 focus:outline-none"
+                   placeholder="status · inspect pod/<name> · runbooks list · policy"
+                   autocomplete="off" spellcheck="false">
+          </div>
+        </form>
+
+        <p class="border-t border-sre-border px-4 py-2 text-[10px] font-mono text-slate-600">
+          GET /api/v1/incidents/&lt;id&gt;/stream · <a href="/metrics" target="_blank" class="text-sky-400/80 hover:underline">/metrics</a> · auto-reconnect with backoff · simulation never touches a live cluster
+        </p>
       </div>
 
-      <form id="cli-form" class="border-t border-sre-border bg-black/40 px-3 py-2">
-        <div class="flex items-center gap-2 font-mono text-[11.5px]">
-          <span class="shrink-0 text-emerald-500">kubeagent@sre $</span>
-          <input id="cli-input"
-                 class="min-w-0 flex-1 bg-transparent text-slate-200 placeholder:text-slate-600 focus:outline-none"
-                 placeholder="status · inspect pod/<name> · runbooks list · policy"
-                 autocomplete="off" spellcheck="false">
+      <div id="topology-panel" class="hidden flex-1 flex-col overflow-hidden">
+        <div class="terminal-scroll relative flex-1 overflow-auto bg-[#060911] p-2">
+          <svg id="topology-svg" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet"
+               role="img" aria-label="Kubernetes cluster topology"
+               class="h-full min-h-[420px] w-full"></svg>
         </div>
-      </form>
-
-      <p class="border-t border-sre-border px-4 py-2 text-[10px] font-mono text-slate-600">
-        GET /api/v1/incidents/&lt;id&gt;/stream · <a href="/metrics" target="_blank" class="text-sky-400/80 hover:underline">/metrics</a> · auto-reconnect with backoff · simulation never touches a live cluster
-      </p>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-sre-border px-3 py-2 font-mono text-[10px] text-slate-500">
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-emerald-400"></span> healthy</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-cyan-400"></span> active</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-rose-500"></span> OOMKilled</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-amber-400"></span> degraded node</span>
+          <span class="ml-auto">click a pod to inspect</span>
+        </div>
+      </div>
     </section>
 
     <!-- ---------- RIGHT: HITL APPROVAL + RCA ---------- -->
@@ -381,6 +428,56 @@
       </div>
     </section>
   </main>
+
+  <!-- ================= POD INSPECTOR DRAWER ================= -->
+  <div id="drawer-backdrop" class="fixed inset-0 z-40 hidden bg-black/50 backdrop-blur-sm"></div>
+  <aside id="pod-drawer" aria-hidden="true" aria-label="Pod inspector"
+         class="fixed inset-y-0 right-0 z-50 w-full max-w-sm translate-x-full transform-gpu border-l border-sre-border bg-sre-surface shadow-2xl transition-transform duration-200 ease-out will-change-transform">
+    <div class="flex h-full flex-col">
+      <div class="flex items-center justify-between border-b border-sre-border px-4 py-3">
+        <div class="min-w-0">
+          <p class="text-[10px] font-mono uppercase tracking-[0.18em] text-slate-500">Pod inspector</p>
+          <h2 id="drawer-name" class="truncate font-mono text-sm font-bold text-slate-100">—</h2>
+        </div>
+        <button id="drawer-close" aria-label="Close pod inspector"
+                class="rounded border border-sre-border p-1.5 text-slate-400 transition-colors hover:border-rose-400/50 hover:text-rose-300">✕</button>
+      </div>
+
+      <div class="terminal-scroll flex-1 space-y-4 overflow-y-auto px-4 py-4 font-mono text-[11.5px]">
+        <dl class="space-y-2">
+          <div class="flex justify-between gap-3"><dt class="text-slate-500">Namespace</dt><dd id="drawer-namespace" class="text-slate-200">—</dd></div>
+          <div class="flex justify-between gap-3"><dt class="text-slate-500">Node</dt><dd id="drawer-node" class="text-slate-200">—</dd></div>
+          <div class="flex justify-between gap-3"><dt class="text-slate-500">Pod IP</dt><dd id="drawer-ip" class="text-slate-200">—</dd></div>
+          <div class="flex justify-between gap-3"><dt class="text-slate-500">Status</dt><dd id="drawer-status" class="text-emerald-300">—</dd></div>
+          <div class="flex justify-between gap-3"><dt class="text-slate-500">Restarts</dt><dd id="drawer-restarts" class="text-slate-200">—</dd></div>
+        </dl>
+
+        <div>
+          <div class="mb-1 flex items-center justify-between gap-2">
+            <span class="text-slate-500">cgroup memory limit</span>
+            <span id="drawer-mem-text" class="text-slate-300">— / — MiB</span>
+          </div>
+          <div class="h-2 w-full overflow-hidden rounded-full bg-zinc-800">
+            <div id="drawer-mem-fill" class="h-full w-0 rounded-full bg-emerald-500"></div>
+          </div>
+          <p id="drawer-mem-note" class="mt-1 text-[10px] text-slate-500"></p>
+        </div>
+
+        <div id="drawer-incident" class="hidden rounded border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[10.5px] text-rose-200"></div>
+
+        <p class="rounded border border-sre-border bg-black/40 px-3 py-2 text-[10px] leading-relaxed text-slate-500">
+          Health comes from live incidents. Crash simulation creates a real incident and starts the agent.
+        </p>
+      </div>
+
+      <div class="border-t border-sre-border p-3">
+        <button id="drawer-crash" class="w-full rounded bg-rose-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-rose-500 disabled:opacity-60">
+          💥 Simulate Crash on this Pod
+        </button>
+        <p id="drawer-action-note" class="mt-1.5 hidden text-[10px] font-mono text-slate-400"></p>
+      </div>
+    </div>
+  </aside>
 
   <!-- ================= COMMAND PALETTE ================= -->
   <div id="command-palette"
@@ -1013,6 +1110,7 @@
           renderApproval(current);
           renderRca(current);
         }
+        if (TOPOLOGY.active) loadTopology();
       } catch (error) {
         appendTerminal("error", `cannot list incidents: ${error.message}`);
       }
@@ -1082,6 +1180,221 @@
       } catch (error) {
         appendTerminal("error", `rejection failed: ${error.message}`);
       }
+    }
+
+    // ---------------------------------------------------------------- topology
+    const TOPOLOGY = { data: null, pod: null, active: false };
+
+    const POD_TONES = {
+      healthy: { stroke: "#34d399", fill: "rgba(16,185,129,0.08)", label: "Healthy" },
+      active: { stroke: "#22d3ee", fill: "rgba(34,211,238,0.10)", label: "Active" },
+      critical: { stroke: "#f43f5e", fill: "rgba(244,63,94,0.12)", label: "OOMKilled" },
+      degraded: { stroke: "#f59e0b", fill: "rgba(245,158,11,0.10)", label: "Degraded" },
+    };
+
+    async function loadTopology() {
+      try {
+        TOPOLOGY.data = await api("/api/v1/topology");
+        renderTopology();
+        if (TOPOLOGY.pod) refreshDrawer(TOPOLOGY.pod);
+      } catch (error) {
+        appendTerminal("error", `topology unavailable: ${error.message}`);
+      }
+    }
+
+    function renderTopology() {
+      const data = TOPOLOGY.data;
+      if (!data) return;
+      const svg = $("#topology-svg");
+      const nodeWidth = 286;
+      const nodeHeight = 232;
+      const gap = 22;
+      const startX = (1000 - (nodeWidth * 3 + gap * 2)) / 2;
+      const nodeY = 168;
+      const podW = 122;
+      const podH = 54;
+      const positions = {};
+      const parts = [];
+
+      parts.push(`<defs>
+        <linearGradient id="nodeFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#18181b"/><stop offset="100%" stop-color="#101012"/>
+        </linearGradient>
+      </defs>`);
+
+      parts.push(`<g>
+        <rect x="390" y="34" width="220" height="56" rx="10" fill="#111113" stroke="#3f3f46"/>
+        <text x="500" y="58" text-anchor="middle" fill="#e4e4e7" font-size="12" font-family="Inter, sans-serif" font-weight="600">control-plane</text>
+        <text x="500" y="76" text-anchor="middle" fill="#71717a" font-size="10" font-family="JetBrains Mono, monospace">us-east-1 · API server</text>
+      </g>`);
+
+      data.nodes.forEach((node, index) => {
+        const x = startX + index * (nodeWidth + gap);
+        const centerX = x + nodeWidth / 2;
+        const degraded = node.status !== "Ready";
+        const stroke = degraded ? "#f59e0b" : "#3f3f46";
+        const mem = Number(node.memory_percent || 0);
+        const memWidth = nodeWidth - 92;
+
+        parts.push(`<path d="M500 90 C500 132, ${centerX} 118, ${centerX} ${nodeY}" fill="none" stroke="#3f3f46" stroke-width="1.5" stroke-dasharray="3 5" opacity="0.8"/>`);
+
+        parts.push(`<g>
+          <rect x="${x}" y="${nodeY}" width="${nodeWidth}" height="${nodeHeight}" rx="12" fill="url(#nodeFill)" stroke="${stroke}" stroke-width="${degraded ? 1.5 : 1}"/>
+          <circle cx="${x + 18}" cy="${nodeY + 22}" r="4" fill="${degraded ? "#f59e0b" : "#34d399"}"/>
+          <text x="${x + 30}" y="${nodeY + 26}" fill="#e4e4e7" font-size="11.5" font-family="JetBrains Mono, monospace">${escapeHtml(node.name)}</text>
+          <text x="${x + nodeWidth - 14}" y="${nodeY + 26}" text-anchor="end" fill="${degraded ? "#fbbf24" : "#34d399"}" font-size="10" font-family="JetBrains Mono, monospace">${escapeHtml(node.status)}</text>
+          <text x="${x + 16}" y="${nodeY + 44}" fill="#71717a" font-size="9" font-family="JetBrains Mono, monospace">mem</text>
+          <rect x="${x + 44}" y="${nodeY + 38}" width="${memWidth}" height="7" rx="3.5" fill="#27272a"/>
+          <rect x="${x + 44}" y="${nodeY + 38}" width="${(memWidth * Math.min(mem, 100)) / 100}" height="7" rx="3.5" fill="${mem >= 90 ? "#f43f5e" : mem >= 80 ? "#f59e0b" : "#34d399"}"/>
+          <text x="${x + nodeWidth - 14}" y="${nodeY + 45}" text-anchor="end" fill="#a1a1aa" font-size="9" font-family="JetBrains Mono, monospace">${mem}%</text>
+        </g>`);
+
+        node.pods.forEach((pod, podIndex) => {
+          const col = podIndex % 2;
+          const row = Math.floor(podIndex / 2);
+          const px = x + 16 + col * (podW + 10);
+          const py = nodeY + 62 + row * (podH + 12);
+          positions[pod.name] = { cx: px + podW / 2, cy: py + podH / 2 };
+          const tone = POD_TONES[pod.status] || POD_TONES.healthy;
+          const critical = pod.status === "critical";
+          if (critical) {
+            parts.push(`<rect class="pod-ring-critical" x="${px - 4}" y="${py - 4}" width="${podW + 8}" height="${podH + 8}" rx="12" fill="none" stroke="#f43f5e" stroke-width="2"/>`);
+          }
+          parts.push(`<g class="topology-pod" data-pod="${escapeHtml(pod.name)}" tabindex="0" role="button" aria-label="Inspect ${escapeHtml(pod.name)}">
+            <rect x="${px}" y="${py}" width="${podW}" height="${podH}" rx="9" fill="${tone.fill}" stroke="${tone.stroke}" stroke-width="${critical ? 1.8 : 1}"/>
+            <circle cx="${px + 12}" cy="${py + 15}" r="3" fill="${tone.stroke}"/>
+            <text x="${px + 21}" y="${py + 19}" fill="#e4e4e7" font-size="9.5" font-family="JetBrains Mono, monospace">${escapeHtml(pod.name)}</text>
+            <text x="${px + 12}" y="${py + 35}" fill="${tone.stroke}" font-size="8.5" font-family="JetBrains Mono, monospace">${tone.label}</text>
+            <text x="${px + 12}" y="${py + 47}" fill="#71717a" font-size="8" font-family="JetBrains Mono, monospace">${escapeHtml(pod.ip)}</text>
+          </g>`);
+        });
+      });
+
+      data.links.forEach((link) => {
+        const from = positions[link.from];
+        const to = positions[link.to];
+        if (!from || !to) return;
+        const midX = (from.cx + to.cx) / 2;
+        const midY = Math.min(from.cy, to.cy) - 34;
+        parts.push(`<path class="topology-link" d="M${from.cx} ${from.cy} Q${midX} ${midY} ${to.cx} ${to.cy}" fill="none" stroke="#38bdf8" stroke-width="1.4" opacity="0.55"/>`);
+      });
+
+      svg.innerHTML = parts.join("");
+      svg.querySelectorAll("[data-pod]").forEach((node) => {
+        node.addEventListener("click", () => openDrawer(node.dataset.pod));
+        node.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openDrawer(node.dataset.pod);
+          }
+        });
+      });
+      const counts = data.counts || {};
+      $("#topology-summary").textContent =
+        `${counts.ready_nodes ?? 0}/${counts.nodes ?? 0} nodes ready · ` +
+        `${counts.pods ?? 0} pods · ${counts.critical_pods ?? 0} critical`;
+    }
+
+    function findPod(name) {
+      if (!TOPOLOGY.data) return null;
+      for (const node of TOPOLOGY.data.nodes) {
+        const pod = node.pods.find((item) => item.name === name);
+        if (pod) return pod;
+      }
+      return null;
+    }
+
+    function openDrawer(podName) {
+      if (!findPod(podName)) return;
+      TOPOLOGY.pod = podName;
+      refreshDrawer(podName);
+      const drawer = $("#pod-drawer");
+      drawer.classList.remove("translate-x-full");
+      drawer.classList.add("translate-x-0");
+      drawer.setAttribute("aria-hidden", "false");
+      $("#drawer-backdrop").classList.remove("hidden");
+      $("#drawer-action-note").classList.add("hidden");
+    }
+
+    function refreshDrawer(podName) {
+      const pod = findPod(podName);
+      if (!pod) return;
+      const tone = POD_TONES[pod.status] || POD_TONES.healthy;
+      $("#drawer-name").textContent = pod.name;
+      $("#drawer-namespace").textContent = pod.namespace;
+      $("#drawer-node").textContent = pod.node;
+      $("#drawer-ip").textContent = pod.ip;
+      $("#drawer-status").textContent = tone.label;
+      $("#drawer-status").style.color = tone.stroke;
+      $("#drawer-restarts").textContent =
+        `${pod.restarts}${pod.last_restart ? ` (last ${pod.last_restart})` : ""}`;
+      const percent = Number(pod.memory.percent || 0);
+      $("#drawer-mem-text").textContent =
+        `${pod.memory.used_mb} / ${pod.memory.limit_mb} MiB (${percent}%)`;
+      const fill = $("#drawer-mem-fill");
+      fill.style.width = `${Math.min(percent, 100)}%`;
+      fill.className =
+        "h-full rounded-full transition-[width] duration-300 " +
+        (percent >= 90 ? "bg-rose-500" : percent >= 80 ? "bg-amber-400" : "bg-emerald-500");
+      $("#drawer-mem-note").textContent =
+        `cgroup limit ${pod.memory.limit_mb}MiB · ` +
+        (percent >= 90 ? "at risk of OOMKill" : "headroom available");
+      const incidentBox = $("#drawer-incident");
+      if (pod.incident_id) {
+        incidentBox.classList.remove("hidden");
+        incidentBox.textContent = `Incident ${pod.incident_id} · ${pod.incident_status}`;
+      } else {
+        incidentBox.classList.add("hidden");
+      }
+    }
+
+    function closeDrawer() {
+      const drawer = $("#pod-drawer");
+      drawer.classList.add("translate-x-full");
+      drawer.classList.remove("translate-x-0");
+      drawer.setAttribute("aria-hidden", "true");
+      $("#drawer-backdrop").classList.add("hidden");
+    }
+
+    async function crashCurrentPod() {
+      if (!TOPOLOGY.pod) return;
+      const button = $("#drawer-crash");
+      const note = $("#drawer-action-note");
+      button.disabled = true;
+      try {
+        const result = await api(`/api/v1/topology/pods/${encodeURIComponent(TOPOLOGY.pod)}/crash`, {
+          method: "POST",
+        });
+        note.classList.remove("hidden");
+        note.textContent = `incident ${result.incident.id} created · agent analyzing`;
+        appendTerminal("info", `topology crash → ${TOPOLOGY.pod} (${result.incident.id})`);
+        await refreshIncidents();
+        await loadTopology();
+        await selectIncident(result.incident.id);
+      } catch (error) {
+        note.classList.remove("hidden");
+        note.textContent = `crash simulation failed: ${error.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function switchTab(tab) {
+      const topology = tab === "topology";
+      TOPOLOGY.active = topology;
+      $("#trace-panel").classList.toggle("hidden", topology);
+      $("#topology-panel").classList.toggle("hidden", !topology);
+      $("#topology-panel").classList.toggle("flex", topology);
+      $("#topology-summary").classList.toggle("hidden", !topology);
+      const active =
+        "topology-tab rounded border border-sky-500/30 bg-sky-500/15 px-2.5 py-1 font-bold text-sky-300";
+      const idle =
+        "topology-tab rounded border border-transparent px-2.5 py-1 text-slate-400 transition-colors hover:text-slate-200";
+      $("#tab-trace").className = topology ? idle : active;
+      $("#tab-topology").className = topology ? active : idle;
+      $("#tab-trace").setAttribute("aria-selected", String(!topology));
+      $("#tab-topology").setAttribute("aria-selected", String(topology));
+      if (topology) loadTopology();
     }
 
     // ---------------------------------------------------------------- palette
@@ -1300,6 +1613,11 @@
 
       // Command palette: button, click-away, arrows/enter/escape, ⌘K / Ctrl+K.
       $("#palette-open").addEventListener("click", openPalette);
+      $("#tab-trace").addEventListener("click", () => switchTab("trace"));
+      $("#tab-topology").addEventListener("click", () => switchTab("topology"));
+      $("#drawer-close").addEventListener("click", closeDrawer);
+      $("#drawer-backdrop").addEventListener("click", closeDrawer);
+      $("#drawer-crash").addEventListener("click", crashCurrentPod);
       $("#command-palette").addEventListener("click", (event) => {
         if (event.target.id === "command-palette") closePalette();
       });
@@ -1329,8 +1647,9 @@
           event.preventDefault();
           if ($("#command-palette").classList.contains("hidden")) openPalette();
           else closePalette();
-        } else if (event.key === "Escape" && !$("#command-palette").classList.contains("hidden")) {
-          closePalette();
+        } else if (event.key === "Escape") {
+          if (!$("#command-palette").classList.contains("hidden")) closePalette();
+          else if (!$("#pod-drawer").classList.contains("translate-x-full")) closeDrawer();
         }
       });
       window.addEventListener("beforeunload", closeStream);
