@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>KubeAgent // Autonomous SRE</title>
+  <!-- Inline icon so the page never requests a missing /favicon.ico -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='8'%20fill='%23020617'/%3E%3Ccircle%20cx='16'%20cy='16'%20r='9'%20fill='none'%20stroke='%2334d399'%20stroke-width='2'/%3E%3Ccircle%20cx='16'%20cy='16'%20r='2.5'%20fill='%2334d399'/%3E%3C/svg%3E" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -102,6 +104,13 @@
               class="ml-2 inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-3 py-1 text-[11px] font-medium text-emerald-300">
           <span id="connection-dot" class="live-dot inline-block h-2 w-2 rounded-full bg-emerald-400"></span>
           <span id="connection-text">Connecting…</span>
+        </span>
+
+        <span id="engine-badge"
+              title="Reasoning engine"
+              class="inline-flex items-center gap-2 rounded-full border border-line bg-panel/80 px-3 py-1 text-[11px] font-medium text-slate-400">
+          <span class="inline-block h-2 w-2 rounded-full bg-slate-500"></span>
+          <span id="engine-text">Reasoning…</span>
         </span>
       </div>
 
@@ -425,6 +434,7 @@
       if (health) {
         $("#stat-pods").textContent = health.total_pods ?? "—";
         state.simulation = Boolean(health.simulation_mode);
+        renderEngine();
       }
       const active = state.incidents.filter((incident) => incident.status !== "RESOLVED").length;
       $("#stat-incidents").textContent = active;
@@ -433,6 +443,30 @@
       } else {
         setConnection(state.simulation ? "sim" : "down", state.simulation ? "Simulation Mode" : "Disconnected");
       }
+    }
+
+    // ---------------------------------------------------------------- engine
+    // Makes the no-key fallback explicit instead of leaving the operator to
+    // wonder why the reasoning text looks deterministic.
+    function renderEngine() {
+      const badge = $("#engine-badge");
+      const text = $("#engine-text");
+      if (!badge || !text) return;
+      const llm = Boolean(state.health && state.health.llm_configured);
+      const model = state.health && state.health.llm_model;
+      text.textContent = llm
+        ? `DeepSeek · ${model || "LLM"}`
+        : "Heuristic engine · no API key";
+      badge.title = llm
+        ? "LLM reasoning enabled (DEEPSEEK_API_KEY / LLM_API_KEY detected)"
+        : "DEEPSEEK_API_KEY not set — using the built-in deterministic rule engine";
+      badge.className =
+        "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium " +
+        (llm
+          ? "border-sky-400/40 bg-sky-400/10 text-sky-300"
+          : "border-slate-500/40 bg-slate-500/10 text-slate-300");
+      badge.firstElementChild.className =
+        "inline-block h-2 w-2 rounded-full " + (llm ? "bg-sky-400 live-dot" : "bg-slate-400");
     }
 
     function renderFeed() {
@@ -819,6 +853,12 @@
       try {
         state.health = await api(API.health);
         state.simulation = Boolean(state.health.simulation_mode);
+        if (!state.health.llm_configured) {
+          appendTerminal(
+            "info",
+            "DEEPSEEK_API_KEY not set — running the built-in heuristic engine (full pipeline, no LLM call)."
+          );
+        }
       } catch (error) {
         appendTerminal("error", `cannot read cluster health: ${error.message}`);
       }

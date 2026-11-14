@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -17,12 +18,18 @@ from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from app import __version__
-from app.api import incidents, stream
-from app.config import Settings, get_settings
+try:  # normal path: `uvicorn app.main:app`, the Docker image, tests
+    from app import __version__
+    from app.api import incidents, stream
+    from app.config import Settings, get_settings
+except ModuleNotFoundError:  # `python -m backend.app.main` from the repo root
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from app import __version__
+    from app.api import incidents, stream
+    from app.config import Settings, get_settings
 
 logger = logging.getLogger("kubeagent")
 
@@ -106,6 +113,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(incidents.router, prefix=settings.api_prefix)
     app.include_router(stream.router, prefix=settings.api_prefix)
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> Response:
+        """Inline icon so browsers never log a 404 for /favicon.ico."""
+        svg = (
+            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+            "<rect width='32' height='32' rx='8' fill='#020617'/>"
+            "<circle cx='16' cy='16' r='9' fill='none' stroke='#34d399' stroke-width='2'/>"
+            "<circle cx='16' cy='16' r='2.5' fill='#34d399'/></svg>"
+        )
+        return Response(
+            content=svg,
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
     @app.get("/healthz", tags=["system"], summary="Liveness and readiness probe")
     async def healthz(request: Request) -> dict[str, Any]:
         """Lightweight probe used by Docker, Kubernetes and uptime checks."""
@@ -118,6 +140,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "environment": current.environment,
             "simulation_mode": current.simulation_mode,
             "llm_configured": current.llm_enabled,
+            "reasoning_engine": (
+                f"llm:{current.llm_model}" if current.llm_enabled else "heuristic"
+            ),
             "uptime_seconds": round(time.time() - started_at, 3),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -160,6 +185,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "unhealthy_pods": unhealthy_pods,
             "active_incidents": active_incidents,
             "simulation_mode": settings.simulation_mode,
+            "llm_configured": settings.llm_enabled,
+            "llm_model": settings.llm_model if settings.llm_enabled else None,
+            "reasoning_engine": (
+                f"llm:{settings.llm_model}" if settings.llm_enabled else "heuristic"
+            ),
             "namespaces": settings.namespace_list,
             "errors": errors,
         }
@@ -187,3 +217,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
+
+
+if __name__ == "__main__":
+    # `python -m backend.app.main` (repo root) and `python -m app.main`
+    # (inside backend/) both start a real server on the configured port.
+    import uvicorn
+
+    _settings = get_settings()
+    uvicorn.run(
+        app,
+        host=_settings.host,
+        port=_settings.port,
+        log_level=_settings.uvicorn_log_level,
+    )

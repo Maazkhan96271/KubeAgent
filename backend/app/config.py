@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LOG_LEVELS: frozenset[str] = frozenset(
@@ -74,7 +74,12 @@ class Settings(BaseSettings):
     # LLM provider (DeepSeek / OpenAI compatible chat completions API)
     # ------------------------------------------------------------------
     llm_provider: str = "deepseek"
-    llm_api_key: SecretStr | None = None
+    #: Accept both names so `DEEPSEEK_API_KEY` (used in the docs) and the
+    #: provider-neutral `LLM_API_KEY` work without configuration changes.
+    llm_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LLM_API_KEY", "DEEPSEEK_API_KEY"),
+    )
     llm_base_url: str = "https://api.deepseek.com/v1"
     llm_model: str = "deepseek-chat"
     llm_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
