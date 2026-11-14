@@ -203,6 +203,42 @@
     </div>
   </header>
 
+  <!-- ================= LINUX TELEMETRY SPARKLINES ================= -->
+  <section aria-label="Linux telemetry" class="grid grid-cols-1 gap-3 px-3 pt-3 sm:grid-cols-3">
+    <div class="rounded-lg border border-sre-border bg-sre-surface p-3">
+      <div class="mb-1 flex items-baseline justify-between gap-2 font-mono">
+        <span class="text-[10.5px] uppercase tracking-wider text-slate-400">Node CPU usage</span>
+        <span class="text-[9.5px] text-slate-500">node-us-east-1c</span>
+      </div>
+      <div class="flex items-end gap-2">
+        <canvas id="spark-cpu" class="h-14 w-full" aria-label="Node CPU usage sparkline"></canvas>
+        <span id="spark-cpu-value" class="w-12 shrink-0 text-right font-mono text-sm font-bold text-sky-300">—</span>
+      </div>
+    </div>
+
+    <div class="rounded-lg border border-sre-border bg-sre-surface p-3">
+      <div class="mb-1 flex items-baseline justify-between gap-2 font-mono">
+        <span class="text-[10.5px] uppercase tracking-wider text-slate-400">Container memory</span>
+        <span class="text-[9.5px] text-slate-500">limit 512 MiB</span>
+      </div>
+      <div class="flex items-end gap-2">
+        <canvas id="spark-mem" class="h-14 w-full" aria-label="Container memory versus limit sparkline"></canvas>
+        <span id="spark-mem-value" class="w-12 shrink-0 text-right font-mono text-sm font-bold text-violet-300">—</span>
+      </div>
+    </div>
+
+    <div class="rounded-lg border border-sre-border bg-sre-surface p-3">
+      <div class="mb-1 flex items-baseline justify-between gap-2 font-mono">
+        <span class="text-[10.5px] uppercase tracking-wider text-slate-400">Kernel I/O wait</span>
+        <span class="text-[9.5px] text-slate-500">/proc/stat · ms</span>
+      </div>
+      <div class="flex items-end gap-2">
+        <canvas id="spark-iowait" class="h-14 w-full" aria-label="Kernel IO wait sparkline"></canvas>
+        <span id="spark-iowait-value" class="w-12 shrink-0 text-right font-mono text-sm font-bold text-amber-300">—</span>
+      </div>
+    </div>
+  </section>
+
   <!-- ================= MAIN SRE CONTROL GRID ================= -->
   <main class="flex-1 grid grid-cols-1 gap-3 p-3 xl:grid-cols-12">
 
@@ -284,6 +320,8 @@
                   class="topology-tab rounded border border-sky-500/30 bg-sky-500/15 px-2.5 py-1 font-bold text-sky-300">🧠 Neural SRE Trace</button>
           <button id="tab-topology" role="tab" aria-selected="false"
                   class="topology-tab rounded border border-transparent px-2.5 py-1 text-slate-400 transition-colors hover:text-slate-200">🕸 Cluster Topology</button>
+          <button id="tab-ai-trace" role="tab" aria-selected="false"
+                  class="topology-tab rounded border border-transparent px-2.5 py-1 text-slate-400 transition-colors hover:text-slate-200">🔍 AI Trace</button>
           <span class="mx-0.5 text-slate-600">·</span>
           <span class="text-slate-500">target</span>
           <span id="stream-target" class="text-slate-400">none</span>
@@ -333,6 +371,14 @@
           <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-amber-400"></span> degraded node</span>
           <span class="ml-auto">click a pod to inspect</span>
         </div>
+      </div>
+
+      <div id="ai-trace-panel" class="hidden flex-1 flex-col overflow-hidden">
+        <div class="flex items-center justify-between gap-2 border-b border-sre-border bg-black/30 px-3 py-2 font-mono text-[10px] text-slate-500">
+          <span>agent reasoning · langsmith-style run tree</span>
+          <span id="ai-trace-meta">—</span>
+        </div>
+        <div id="ai-trace-list" class="terminal-scroll flex-1 space-y-2 overflow-y-auto bg-[#060911] p-3"></div>
       </div>
     </section>
 
@@ -987,6 +1033,8 @@
     function renderPatch(patch) {
       const target = $("#patch-diff");
       if (!target || !patch) return;
+      state.patchData = patch;
+      if (!$("#ai-trace-panel").classList.contains("hidden")) renderAiTrace(activeIncident());
       if (!patch.available || !patch.diff.length) {
         target.innerHTML = `<div class="text-slate-500">${escapeHtml(patch.note || "No declarative patch for this diagnosis.")}</div>`;
         return;
@@ -1111,6 +1159,7 @@
           renderRca(current);
         }
         if (TOPOLOGY.active) loadTopology();
+        if (!$("#ai-trace-panel").classList.contains("hidden")) renderAiTrace(activeIncident());
       } catch (error) {
         appendTerminal("error", `cannot list incidents: ${error.message}`);
       }
@@ -1379,22 +1428,510 @@
       }
     }
 
+    // ---------------------------------------------------------------- sparklines
+    // Canvas telemetry: one rAF loop for all three charts. Data lands in offscreen
+    // arrays; the DOM is only touched when a formatted readout actually changes.
+    const SPARK_POINTS = 120;
+    const SPARK_SAMPLE_MS = 110;
+    const SPARKS = [];
+    let sparkRaf = null;
+    let sparkLastFrame = 0;
+
+    const SPARK_CONFIGS = [
+      {
+        id: "spark-cpu",
+        readout: "spark-cpu-value",
+        color: "#38bdf8",
+        min: 0,
+        max: 100,
+        base: 46,
+        amp: 26,
+        threshold: null,
+        warnFrom: 85,
+        unit: "%",
+        decimals: 0,
+      },
+      {
+        id: "spark-mem",
+        readout: "spark-mem-value",
+        color: "#a78bfa",
+        min: 0,
+        max: 640,
+        base: 468,
+        amp: 62,
+        threshold: 512,
+        warnFrom: 512,
+        unit: "MiB",
+        decimals: 0,
+      },
+      {
+        id: "spark-iowait",
+        readout: "spark-iowait-value",
+        color: "#f59e0b",
+        min: 0,
+        max: 40,
+        base: 6.5,
+        amp: 5.5,
+        threshold: 20,
+        warnFrom: 20,
+        unit: "ms",
+        decimals: 1,
+      },
+    ];
+
+    function sparkSample(chart, time) {
+      const wave =
+        Math.sin(time * 0.55 + chart.phase) * 0.6 + Math.sin(time * 1.73 + chart.phase * 2.1) * 0.4;
+      const noise = (Math.random() - 0.5) * (chart.max - chart.min) * 0.035;
+      const value = chart.base + wave * chart.amp + noise;
+      chart.head = Math.min(chart.max, Math.max(chart.min, value));
+    }
+
+    function resizeSpark(chart) {
+      const canvas = chart.canvas;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      chart.width = Math.max(1, Math.round(rect.width));
+      chart.height = Math.max(1, Math.round(rect.height || 56));
+      chart.dpr = dpr;
+      canvas.width = Math.round(chart.width * dpr);
+      canvas.height = Math.round(chart.height * dpr);
+      chart.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function initSparklines() {
+      if (SPARKS.length) return;
+      SPARK_CONFIGS.forEach((config) => {
+        const canvas = document.getElementById(config.id);
+        if (!canvas) return;
+        const chart = {
+          ...config,
+          canvas,
+          ctx: canvas.getContext("2d"),
+          points: [],
+          phase: Math.random() * Math.PI * 2,
+          clock: 0,
+          progress: 0,
+          head: config.base,
+          prev: config.base,
+          lastReadout: "",
+          readoutEl: document.getElementById(config.readout),
+        };
+        for (let i = 0; i < SPARK_POINTS - 1; i += 1) {
+          sparkSample(chart, i * (SPARK_SAMPLE_MS / 1000));
+          chart.points.push(chart.head);
+          chart.prev = chart.head;
+        }
+        SPARKS.push(chart);
+        resizeSpark(chart);
+      });
+      sparkLastFrame = 0;
+      if (!sparkRaf) sparkRaf = requestAnimationFrame(drawSparks);
+    }
+
+    function drawSpark(chart) {
+      const { ctx, width: w, height: h } = chart;
+      if (w < 4 || h < 4) return;
+      const span = chart.max - chart.min || 1;
+      const yOf = (value) => h - ((value - chart.min) / span) * h;
+      const live = chart.prev + (chart.head - chart.prev) * chart.progress;
+
+      ctx.clearRect(0, 0, w, h);
+
+      ctx.strokeStyle = "rgba(255,255,255,0.05)";
+      ctx.lineWidth = 1;
+      for (let g = 1; g < 3; g += 1) {
+        const gy = Math.round((h * g) / 3) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(0, gy);
+        ctx.lineTo(w, gy);
+        ctx.stroke();
+      }
+
+      if (chart.threshold != null) {
+        const ty = Math.max(0.5, Math.min(h - 0.5, Math.round(yOf(chart.threshold)) + 0.5));
+        ctx.fillStyle = "rgba(244,63,94,0.08)";
+        ctx.fillRect(0, 0, w, ty);
+        ctx.setLineDash([3, 4]);
+        ctx.strokeStyle = "rgba(251,191,36,0.6)";
+        ctx.beginPath();
+        ctx.moveTo(0, ty);
+        ctx.lineTo(w, ty);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      const step = w / (SPARK_POINTS - 1);
+      const gradient = ctx.createLinearGradient(0, 0, 0, h);
+      gradient.addColorStop(0, chart.color + "4d");
+      gradient.addColorStop(1, chart.color + "00");
+
+      ctx.beginPath();
+      chart.points.forEach((value, index) => {
+        const px = index * step;
+        const py = yOf(value);
+        if (index === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.lineTo(w, yOf(live));
+      ctx.lineTo(w, h);
+      ctx.lineTo(0, h);
+      ctx.closePath();
+      ctx.fillStyle = gradient;
+      ctx.fill();
+
+      ctx.beginPath();
+      chart.points.forEach((value, index) => {
+        const px = index * step;
+        const py = yOf(value);
+        if (index === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.lineTo(w, yOf(live));
+      ctx.strokeStyle = chart.color;
+      ctx.lineWidth = 1.6;
+      ctx.lineJoin = "round";
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(w - 1.5, yOf(live), 2.2, 0, Math.PI * 2);
+      ctx.fillStyle = chart.color;
+      ctx.fill();
+
+      const text = `${live.toFixed(chart.decimals)}${chart.unit}`;
+      if (chart.readoutEl && text !== chart.lastReadout) {
+        chart.lastReadout = text;
+        chart.readoutEl.textContent = text;
+        const hot = chart.warnFrom != null && live >= chart.warnFrom;
+        chart.readoutEl.classList.toggle("text-rose-300", hot);
+        chart.readoutEl.classList.toggle("text-sky-300", !hot && chart.id === "spark-cpu");
+        chart.readoutEl.classList.toggle("text-violet-300", !hot && chart.id === "spark-mem");
+        chart.readoutEl.classList.toggle("text-amber-300", !hot && chart.id === "spark-iowait");
+      }
+    }
+
+    function drawSparks(now) {
+      const dt = sparkLastFrame ? Math.min(now - sparkLastFrame, 120) : 16;
+      sparkLastFrame = now;
+      for (const chart of SPARKS) {
+        chart.clock += dt / 1000;
+        chart.progress += dt / SPARK_SAMPLE_MS;
+        if (chart.progress >= 1) {
+          chart.progress = 0;
+          chart.prev = chart.head;
+          sparkSample(chart, chart.clock);
+          chart.points.push(chart.prev);
+          if (chart.points.length > SPARK_POINTS - 1) chart.points.shift();
+        }
+        drawSpark(chart);
+      }
+      sparkRaf = document.hidden ? null : requestAnimationFrame(drawSparks);
+      if (document.hidden) sparkRaf = null;
+    }
+
+    function startSparklines() {
+      if (!SPARKS.length) initSparklines();
+      if (sparkRaf || document.hidden) return;
+      sparkLastFrame = 0;
+      sparkRaf = requestAnimationFrame(drawSparks);
+    }
+
+    function stopSparklines() {
+      if (sparkRaf) cancelAnimationFrame(sparkRaf);
+      sparkRaf = null;
+    }
+
+    // ---------------------------------------------------------------- ai trace
+    const AI_TRACE_OPEN = new Set(["ingest"]);
+    const AI_TRACE_COPY = new Map();
+
+    const LOG_LINES = [
+      { ts: "09:41:07.412", level: "INFO", text: "payment-api pid=1 heap=384MiB cgroup=/kubepods/burstable/pod7f9b8c" },
+      { ts: "09:42:18.004", level: "INFO", text: "processed 1,284 authorizations in 60s (p99 212ms)" },
+      { ts: "09:43:51.770", level: "WARN", text: "live heap 498MiB / 512MiB limit — GC overhead 31%" },
+      { ts: "09:44:02.115", level: "ERROR", text: "java.lang.OutOfMemoryError: Java heap space" },
+      { ts: "09:44:02.118", level: "ERROR", text: "  at com.vke.payment.LedgerCache.warm(LedgerCache.java:88)" },
+      { ts: "09:44:02.340", level: "ERROR", text: "container terminated: exit code 137 (OOMKilled)" },
+      { ts: "09:44:03.001", level: "INFO", text: "kubelet: restart 4/∞ backoff 5m0s, last state Terminated(137)" },
+    ];
+
+    const REASONING_STEPS = [
+      "Alert KubeContainerOOMKilled fired for payment-service-7f9b8c on node-us-east-1c.",
+      "Exit code 137 plus memory.peak 512MiB means the kernel OOM killer, not an application panic.",
+      "LedgerCache.warm() retained 1.2M entries after the 09:40 deploy, so RSS grew monotonically until the cgroup limit.",
+      "Restart count 4 with a 5m backoff matches a crash loop caused by a limit smaller than the working set.",
+      "Recommendation: raise limits.memory to 1Gi and requests to 512Mi so the cache can warm without OOM pressure.",
+    ];
+
+    const FALLBACK_DIFF = [
+      "--- a/deploy/payment-service.yaml",
+      "+++ b/deploy/payment-service.yaml",
+      "@@ -14,7 +14,10 @@ spec:",
+      "     spec:",
+      "       containers:",
+      "         - name: payment-api",
+      "           image: registry.vke/payment-api:2.14.0",
+      "           resources:",
+      "             limits:",
+      "-              memory: 512Mi",
+      "+              memory: 1Gi",
+      "+              ephemeral-storage: 2Gi",
+      "             requests:",
+      "-              memory: 256Mi",
+      "+              memory: 512Mi",
+      "+            livenessProbe:",
+      "+              initialDelaySeconds: 45",
+    ];
+
+    function activeIncident() {
+      return state.incidents.find((item) => item.id === state.currentId) || null;
+    }
+
+    function traceDiffLines() {
+      const patch = state.patchData;
+      if (patch && patch.available && Array.isArray(patch.diff) && patch.diff.length) {
+        const target = (patch.target || "deployment/payment-service").replace(/^deployment\//, "");
+        const body = patch.diff.map(
+          ({ type, text }) => `${type === "add" ? "+" : type === "del" ? "-" : " "}${text}`
+        );
+        return [
+          `--- a/deploy/${target}.yaml`,
+          `+++ b/deploy/${target}.yaml`,
+          `@@ ${patch.namespace || "default"} @@`,
+          ...body,
+        ];
+      }
+      return FALLBACK_DIFF;
+    }
+
+    function highlightJson(payload) {
+      const json = JSON.stringify(payload, null, 2);
+      return json.replace(
+        /("(?:\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(?:\s*:)?|\b(?:true|false|null)\b|-?\d+(?:\.\d+)?)/g,
+        (match) => {
+          let tone = "text-amber-300";
+          if (/^"/.test(match)) tone = /:\s*$/.test(match) ? "text-sky-300" : "text-emerald-300";
+          else if (/null/.test(match)) tone = "text-slate-500";
+          else if (/true|false/.test(match)) tone = "text-rose-300";
+          return `<span class="${tone}">${escapeHtml(match)}</span>`;
+        }
+      );
+    }
+
+    function logsHtml() {
+      return LOG_LINES.map(({ ts, level, text }) => {
+        const tone =
+          level === "ERROR"
+            ? "text-rose-300"
+            : level === "WARN"
+              ? "text-amber-300"
+              : "text-emerald-300";
+        return `<div class="flex gap-2"><span class="shrink-0 text-slate-600">${ts}</span><span class="w-9 shrink-0 ${tone}">${level}</span><span class="min-w-0 break-words text-slate-300">${escapeHtml(text)}</span></div>`;
+      }).join("");
+    }
+
+    function logsText() {
+      const header = "$ kubectl logs payment-service-7f9b8c -c payment-api --previous";
+      return [header, ...LOG_LINES.map(({ ts, level, text }) => `${ts} ${level} ${text}`)].join("\n");
+    }
+
+    function reasoningSteps(incident) {
+      const steps = [...REASONING_STEPS];
+      const diagnosis = incident && incident.diagnosis;
+      if (diagnosis && diagnosis.root_cause) {
+        const confidence = Math.round(Number(diagnosis.confidence || 0) * 100);
+        steps.push(`Confirmed root cause: ${diagnosis.root_cause} (confidence ${confidence}%).`);
+      }
+      return steps;
+    }
+
+    function reasoningHtml(incident) {
+      return reasoningSteps(incident)
+        .map(
+          (text, index) =>
+            `<div class="flex gap-2"><span class="mt-0.5 shrink-0 rounded bg-sky-500/15 px-1 text-[9px] font-bold text-sky-300">${index + 1}</span><span class="text-slate-300">${escapeHtml(text)}</span></div>`
+        )
+        .join("");
+    }
+
+    function diffHtml(lines) {
+      return lines
+        .map((line) => {
+          const tone =
+            line.startsWith("+++") || line.startsWith("---")
+              ? "text-slate-500"
+              : line.startsWith("+")
+                ? "bg-emerald-500/5 text-emerald-300"
+                : line.startsWith("-")
+                  ? "bg-rose-500/5 text-rose-300"
+                  : line.startsWith("@@")
+                    ? "text-sky-300"
+                    : "text-slate-400";
+          return `<div class="whitespace-pre px-1 ${tone}">${escapeHtml(line)}</div>`;
+        })
+        .join("");
+    }
+
+    function buildAiTrace(incident) {
+      const workload = incident ? incident.workload || incident.title : "payment-service";
+      const payload = {
+        event: "alert.ingested",
+        received_at: incident ? incident.created_at : new Date().toISOString(),
+        source: "prometheus/alertmanager",
+        incident_id: incident ? incident.id : "inc-awaiting",
+        severity: incident ? incident.severity : "SEV-1",
+        namespace: incident ? incident.namespace : "default",
+        workload,
+        pipeline_step: incident ? incident.status : "NEW",
+        labels: {
+          alertname: "KubeContainerOOMKilled",
+          container: "payment-api",
+          cluster: "vke-prod-us-east-1",
+          node: "node-us-east-1c",
+        },
+        annotations: {
+          summary: "Container terminated with exit code 137 (OOMKilled)",
+          runbook: "runbooks/oom-kill.md",
+        },
+      };
+      const diff = traceDiffLines();
+      return [
+        {
+          id: "ingest",
+          title: "Alert Ingestion",
+          latency: "Latency: 42ms",
+          tone: "text-sky-300",
+          body: `<div class="max-h-64 overflow-auto">${highlightJson(payload)}</div>`,
+          copy: JSON.stringify(payload, null, 2),
+        },
+        {
+          id: "logs",
+          title: "Tool: inspect_pod_logs",
+          latency: "Latency: 180ms",
+          tone: "text-cyan-300",
+          body: `<div class="mb-1 truncate text-slate-500">$ kubectl logs ${escapeHtml(workload)} --previous</div>${logsHtml()}`,
+          copy: logsText(),
+        },
+        {
+          id: "reason",
+          title: "DeepSeek Reasoning",
+          latency: "Latency: 840ms · Tokens: 412",
+          tone: "text-violet-300",
+          body: reasoningHtml(incident),
+          copy: reasoningSteps(incident).join("\n"),
+        },
+        {
+          id: "patch",
+          title: "Proposed YAML Patch",
+          latency: "Diff",
+          tone: "text-emerald-300",
+          body: diffHtml(diff),
+          copy: diff.join("\n"),
+        },
+      ];
+    }
+
+    function traceCardHtml(card) {
+      const open = AI_TRACE_OPEN.has(card.id);
+      return `<article data-card="${card.id}" class="overflow-hidden rounded border ${open ? "border-sky-500/40" : "border-sre-border"} bg-black/40">
+        <header class="flex items-center gap-2 px-2.5 py-2">
+          <button type="button" class="trace-toggle flex min-w-0 flex-1 items-center gap-2 text-left" data-toggle="${card.id}" aria-expanded="${open}">
+            <span class="trace-chevron shrink-0 text-[10px] text-slate-500">${open ? "▾" : "▸"}</span>
+            <span class="truncate font-mono text-[11px] font-semibold text-slate-200">${escapeHtml(card.title)}</span>
+          </button>
+          <span class="shrink-0 rounded border border-sre-border bg-white/[0.03] px-1.5 py-0.5 font-mono text-[9px] ${card.tone}">${escapeHtml(card.latency)}</span>
+          <button type="button" class="trace-copy shrink-0 rounded border border-sre-border px-1.5 py-0.5 font-mono text-[9px] text-slate-400 transition-colors hover:border-sky-500/40 hover:text-sky-300" data-copy="${card.id}" aria-label="Copy ${escapeHtml(card.title)}">copy</button>
+        </header>
+        <div class="trace-body ${open ? "" : "hidden"} border-t border-sre-border/60 bg-[#060911] px-2.5 py-2 font-mono text-[10.5px] leading-relaxed" data-body="${card.id}">${card.body}</div>
+      </article>`;
+    }
+
+    function renderAiTrace(incident) {
+      const list = $("#ai-trace-list");
+      if (!list) return;
+      const cards = buildAiTrace(incident);
+      AI_TRACE_COPY.clear();
+      cards.forEach((card) => AI_TRACE_COPY.set(card.id, card.copy));
+      list.innerHTML = cards.map(traceCardHtml).join("");
+      $("#ai-trace-meta").textContent = `${cards.length} spans · 1100ms · 412 tokens`;
+    }
+
+    async function copyToClipboard(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+    }
+
+    async function handleTraceClick(event) {
+      const toggle = event.target.closest("[data-toggle]");
+      if (toggle) {
+        const id = toggle.dataset.toggle;
+        const body = document.querySelector(`[data-body="${id}"]`);
+        const article = toggle.closest("[data-card]");
+        const collapsed = body.classList.toggle("hidden");
+        toggle.setAttribute("aria-expanded", String(!collapsed));
+        toggle.querySelector(".trace-chevron").textContent = collapsed ? "▸" : "▾";
+        article.classList.toggle("border-sky-500/40", !collapsed);
+        article.classList.toggle("border-sre-border", collapsed);
+        if (collapsed) AI_TRACE_OPEN.delete(id);
+        else AI_TRACE_OPEN.add(id);
+        return;
+      }
+      const copyButton = event.target.closest("[data-copy]");
+      if (!copyButton) return;
+      const id = copyButton.dataset.copy;
+      const text = AI_TRACE_COPY.get(id);
+      if (!text) return;
+      try {
+        await copyToClipboard(text);
+        copyButton.textContent = "copied ✓";
+        copyButton.classList.add("border-emerald-500/40", "text-emerald-300");
+        setTimeout(() => {
+          copyButton.textContent = "copy";
+          copyButton.classList.remove("border-emerald-500/40", "text-emerald-300");
+        }, 1200);
+      } catch (error) {
+        copyButton.textContent = "failed";
+        setTimeout(() => {
+          copyButton.textContent = "copy";
+        }, 1200);
+      }
+    }
+
     function switchTab(tab) {
       const topology = tab === "topology";
+      const aiTrace = tab === "ai-trace";
       TOPOLOGY.active = topology;
-      $("#trace-panel").classList.toggle("hidden", topology);
+      $("#trace-panel").classList.toggle("hidden", topology || aiTrace);
       $("#topology-panel").classList.toggle("hidden", !topology);
       $("#topology-panel").classList.toggle("flex", topology);
+      $("#ai-trace-panel").classList.toggle("hidden", !aiTrace);
+      $("#ai-trace-panel").classList.toggle("flex", aiTrace);
       $("#topology-summary").classList.toggle("hidden", !topology);
       const active =
         "topology-tab rounded border border-sky-500/30 bg-sky-500/15 px-2.5 py-1 font-bold text-sky-300";
       const idle =
         "topology-tab rounded border border-transparent px-2.5 py-1 text-slate-400 transition-colors hover:text-slate-200";
-      $("#tab-trace").className = topology ? idle : active;
-      $("#tab-topology").className = topology ? active : idle;
-      $("#tab-trace").setAttribute("aria-selected", String(!topology));
-      $("#tab-topology").setAttribute("aria-selected", String(topology));
+      [
+        ["trace", $("#tab-trace")],
+        ["topology", $("#tab-topology")],
+        ["ai-trace", $("#tab-ai-trace")],
+      ].forEach(([name, element]) => {
+        const selected = name === tab;
+        element.className = selected ? active : idle;
+        element.setAttribute("aria-selected", String(selected));
+      });
       if (topology) loadTopology();
+      if (aiTrace) renderAiTrace(activeIncident());
     }
 
     // ---------------------------------------------------------------- palette
@@ -1615,6 +2152,9 @@
       $("#palette-open").addEventListener("click", openPalette);
       $("#tab-trace").addEventListener("click", () => switchTab("trace"));
       $("#tab-topology").addEventListener("click", () => switchTab("topology"));
+      $("#tab-ai-trace").addEventListener("click", () => switchTab("ai-trace"));
+      $("#ai-trace-list").addEventListener("click", handleTraceClick);
+      window.addEventListener("resize", () => SPARKS.forEach(resizeSpark));
       $("#drawer-close").addEventListener("click", closeDrawer);
       $("#drawer-backdrop").addEventListener("click", closeDrawer);
       $("#drawer-crash").addEventListener("click", crashCurrentPod);
@@ -1654,6 +2194,8 @@
       });
       window.addEventListener("beforeunload", closeStream);
       document.addEventListener("visibilitychange", () => {
+        if (document.hidden) stopSparklines();
+        else startSparklines();
         if (!document.hidden && state.currentId && (!state.source || state.source.readyState === EventSource.CLOSED)) {
           connectStream(state.currentId, true);
         }
@@ -1662,6 +2204,8 @@
 
     async function boot() {
       bindEvents();
+      initSparklines();
+      renderAiTrace(null);
       if (window.lucide) window.lucide.createIcons();
       try {
         state.health = await api(API.health);
