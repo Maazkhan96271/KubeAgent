@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KubeAgent // Autonomous SRE</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: "#020617",
+            panel: "#0b1220",
+            line: "#1e293b",
+          },
+          fontFamily: {
+            mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+          },
+          boxShadow: {
+            glow: "0 0 24px rgba(16, 185, 129, 0.18)",
+            card: "0 18px 48px -24px rgba(0, 0, 0, 0.9)",
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    html { color-scheme: dark; }
+    body {
+      background-color: #020617;
+      background-image:
+        radial-gradient(900px 500px at 12% -10%, rgba(16, 185, 129, 0.10), transparent 60%),
+        radial-gradient(800px 500px at 92% 0%, rgba(56, 189, 248, 0.10), transparent 55%),
+        linear-gradient(rgba(30, 41, 59, 0.28) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(30, 41, 59, 0.28) 1px, transparent 1px);
+      background-size: auto, auto, 42px 42px, 42px 42px;
+    }
+    .scanline::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(16, 185, 129, 0.035) 0px,
+        rgba(16, 185, 129, 0.035) 1px,
+        transparent 1px,
+        transparent 4px
+      );
+      pointer-events: none;
+    }
+    .terminal-scroll::-webkit-scrollbar { width: 9px; }
+    .terminal-scroll::-webkit-scrollbar-track { background: #020617; }
+    .terminal-scroll::-webkit-scrollbar-thumb { background: #1f3d33; border-radius: 999px; }
+    .terminal-scroll::-webkit-scrollbar-thumb:hover { background: #2f6350; }
+    @keyframes pulseRing {
+      0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); }
+      70% { box-shadow: 0 0 0 9px rgba(52, 211, 153, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+    }
+    .live-dot { animation: pulseRing 2.1s infinite; }
+    @keyframes blinkCursor { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+    .cursor::after {
+      content: "▌";
+      margin-left: 2px;
+      color: #34d399;
+      animation: blinkCursor 1.1s step-end infinite;
+    }
+    .step-line { background: linear-gradient(90deg, #1e293b, #1e293b); }
+    [data-step].is-done .step-dot { background-color: #10b981; border-color: #10b981; color: #022c22; }
+    [data-step].is-active .step-dot {
+      background-color: #022c22;
+      border-color: #34d399;
+      color: #6ee7b7;
+      box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.16);
+    }
+    [data-step].is-done .step-label, [data-step].is-active .step-label { color: #e2e8f0; }
+  </style>
+</head>
+<body class="min-h-screen font-mono text-slate-200 antialiased">
+
+  <!-- ================= TOP NAVIGATION ================= -->
+  <header class="sticky top-0 z-30 border-b border-line/80 bg-ink/80 backdrop-blur-xl">
+    <div class="mx-auto flex max-w-[1600px] flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+
+      <div class="flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 shadow-glow">
+          <i data-lucide="radar" class="h-5 w-5 text-emerald-300"></i>
+        </div>
+        <div>
+          <h1 class="text-base font-bold tracking-tight text-slate-50">
+            KubeAgent <span class="text-emerald-400">//</span> Autonomous SRE
+          </h1>
+          <p class="text-[11px] uppercase tracking-[0.22em] text-slate-500">Mission Control</p>
+        </div>
+
+        <span id="connection-badge"
+              class="ml-2 inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-3 py-1 text-[11px] font-medium text-emerald-300">
+          <span id="connection-dot" class="live-dot inline-block h-2 w-2 rounded-full bg-emerald-400"></span>
+          <span id="connection-text">Connecting…</span>
+        </span>
+      </div>
+
+      <div class="grid grid-cols-3 gap-3 sm:gap-4">
+        <div class="rounded-xl border border-line bg-panel/80 px-4 py-2.5 shadow-card">
+          <div class="flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500">
+            <i data-lucide="box" class="h-3 w-3"></i> Total Pods
+          </div>
+          <div id="stat-pods" class="mt-1 text-xl font-bold text-slate-100">—</div>
+        </div>
+        <div class="rounded-xl border border-line bg-panel/80 px-4 py-2.5 shadow-card">
+          <div class="flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500">
+            <i data-lucide="siren" class="h-3 w-3"></i> Active Incidents
+          </div>
+          <div id="stat-incidents" class="mt-1 text-xl font-bold text-amber-300">0</div>
+        </div>
+        <div class="rounded-xl border border-line bg-panel/80 px-4 py-2.5 shadow-card">
+          <div class="flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500">
+            <i data-lucide="trending-down" class="h-3 w-3"></i> Avg MTTR
+          </div>
+          <div class="mt-1 flex items-baseline gap-2">
+            <span class="text-xl font-bold text-emerald-300">-78%</span>
+            <span class="text-[10px] text-slate-500">reduction</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= MAIN GRID ================= -->
+  <main class="mx-auto grid max-w-[1600px] grid-cols-1 gap-5 px-5 py-6 xl:grid-cols-12">
+
+    <!-- ---------- LEFT: INJECTOR + FEED ---------- -->
+    <section class="space-y-5 xl:col-span-4">
+
+      <div class="rounded-2xl border border-line bg-panel/70 p-5 shadow-card">
+        <div class="mb-4 flex items-center justify-between">
+          <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-200">
+            <i data-lucide="flask-conical" class="h-4 w-4 text-fuchsia-400"></i>
+            Chaos Incident Injector
+          </h2>
+          <span class="rounded border border-fuchsia-500/30 bg-fuchsia-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-fuchsia-300">sandbox</span>
+        </div>
+
+        <p class="mb-4 text-[11px] leading-relaxed text-slate-500">
+          Inject a deterministic failure into the simulated cluster. The agent picks it up, investigates and
+          proposes remediation for human approval.
+        </p>
+
+        <div class="space-y-2.5">
+          <button data-scenario="OOMKilled"
+                  class="trigger group flex w-full items-center justify-between rounded-xl border border-red-500/25 bg-red-500/5 px-4 py-3 text-left transition hover:border-red-400/60 hover:bg-red-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50">
+            <span class="flex items-center gap-3">
+              <i data-lucide="memory-stick" class="h-4 w-4 text-red-400"></i>
+              <span class="text-sm text-slate-200">Simulate OOMKill</span>
+            </span>
+            <i data-lucide="play" class="h-3.5 w-3.5 text-slate-600 transition group-hover:text-red-300"></i>
+          </button>
+
+          <button data-scenario="Zombie_Process_Leak"
+                  class="trigger group flex w-full items-center justify-between rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-3 text-left transition hover:border-amber-400/60 hover:bg-amber-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50">
+            <span class="flex items-center gap-3">
+              <i data-lucide="cpu" class="h-4 w-4 text-amber-400"></i>
+              <span class="text-sm text-slate-200">Simulate Zombie CPU Spike</span>
+            </span>
+            <i data-lucide="play" class="h-3.5 w-3.5 text-slate-600 transition group-hover:text-amber-300"></i>
+          </button>
+
+          <button data-scenario="Config Error"
+                  class="trigger group flex w-full items-center justify-between rounded-xl border border-sky-500/25 bg-sky-500/5 px-4 py-3 text-left transition hover:border-sky-400/60 hover:bg-sky-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50">
+            <span class="flex items-center gap-3">
+              <i data-lucide="file-warning" class="h-4 w-4 text-sky-400"></i>
+              <span class="text-sm text-slate-200">Simulate CrashLoopBackOff</span>
+            </span>
+            <i data-lucide="play" class="h-3.5 w-3.5 text-slate-600 transition group-hover:text-sky-300"></i>
+          </button>
+        </div>
+
+        <p id="injector-status" class="mt-3 hidden rounded-lg border border-line bg-ink/60 px-3 py-2 text-[11px] text-slate-400"></p>
+      </div>
+
+      <div class="rounded-2xl border border-line bg-panel/70 shadow-card">
+        <div class="flex items-center justify-between border-b border-line/80 px-5 py-3.5">
+          <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-200">
+            <i data-lucide="list-checks" class="h-4 w-4 text-emerald-400"></i>
+            Active Alerts
+          </h2>
+          <button id="refresh-feed" class="rounded-md border border-line p-1.5 text-slate-500 transition hover:border-emerald-500/40 hover:text-emerald-300" title="Refresh">
+            <i data-lucide="refresh-cw" class="h-3.5 w-3.5"></i>
+          </button>
+        </div>
+        <div id="incident-feed" class="max-h-[420px] divide-y divide-line/60 overflow-y-auto terminal-scroll">
+          <p class="px-5 py-8 text-center text-[11px] text-slate-600">No incidents yet — inject one above.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- RIGHT: STREAM + TERMINAL ---------- -->
+    <section class="space-y-5 xl:col-span-8">
+
+      <!-- HITL approval banner -->
+      <div id="approval-banner" class="hidden overflow-hidden rounded-2xl border border-amber-400/40 bg-amber-500/10 shadow-[0_0_35px_-12px_rgba(251,191,36,0.55)]">
+        <div class="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div class="flex items-start gap-3">
+            <i data-lucide="shield-alert" class="mt-0.5 h-5 w-5 shrink-0 text-amber-300"></i>
+            <div>
+              <p class="text-[11px] uppercase tracking-[0.2em] text-amber-300/80">Human-in-the-loop approval required</p>
+              <p class="mt-1 text-sm text-slate-100">
+                Agent proposes: <span id="approval-action" class="font-semibold text-amber-200">—</span>
+              </p>
+              <p class="mt-1 text-[11px] text-slate-400">Destructive actions never run without an operator sign-off.</p>
+            </div>
+          </div>
+          <div class="flex shrink-0 gap-2">
+            <button id="approve-btn" class="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-emerald-950 transition hover:bg-emerald-400">
+              <i data-lucide="check" class="h-3.5 w-3.5"></i> Approve Action
+            </button>
+            <button id="reject-btn" class="inline-flex items-center gap-2 rounded-lg border border-line bg-ink px-4 py-2 text-xs font-medium text-slate-300 transition hover:border-red-400/50 hover:text-red-300">
+              <i data-lucide="x" class="h-3.5 w-3.5"></i> Reject
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step indicator -->
+      <div class="rounded-2xl border border-line bg-panel/70 px-5 py-4 shadow-card">
+        <div class="mb-3 flex items-center justify-between">
+          <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-200">
+            <i data-lucide="git-branch" class="h-4 w-4 text-sky-400"></i>
+            Agent Investigation Pipeline
+          </h2>
+          <span id="pipeline-tag" class="rounded border border-line bg-ink/60 px-2 py-0.5 text-[10px] uppercase tracking-wider text-slate-500">idle</span>
+        </div>
+
+        <ol class="grid grid-cols-1 gap-3 sm:grid-cols-5">
+          <li data-step="1" class="step">
+            <div class="flex items-center gap-2">
+              <span class="step-dot flex h-6 w-6 items-center justify-center rounded-full border border-line bg-ink text-[11px] text-slate-500">1</span>
+              <span class="hidden h-px flex-1 step-line sm:block"></span>
+            </div>
+            <p class="step-label mt-2 text-[11px] leading-tight text-slate-500">Ingestion</p>
+          </li>
+          <li data-step="2" class="step">
+            <div class="flex items-center gap-2">
+              <span class="step-dot flex h-6 w-6 items-center justify-center rounded-full border border-line bg-ink text-[11px] text-slate-500">2</span>
+              <span class="hidden h-px flex-1 step-line sm:block"></span>
+            </div>
+            <p class="step-label mt-2 text-[11px] leading-tight text-slate-500">Metric Analysis</p>
+          </li>
+          <li data-step="3" class="step">
+            <div class="flex items-center gap-2">
+              <span class="step-dot flex h-6 w-6 items-center justify-center rounded-full border border-line bg-ink text-[11px] text-slate-500">3</span>
+              <span class="hidden h-px flex-1 step-line sm:block"></span>
+            </div>
+            <p class="step-label mt-2 text-[11px] leading-tight text-slate-500">Root Cause</p>
+          </li>
+          <li data-step="4" class="step">
+            <div class="flex items-center gap-2">
+              <span class="step-dot flex h-6 w-6 items-center justify-center rounded-full border border-line bg-ink text-[11px] text-slate-500">4</span>
+              <span class="hidden h-px flex-1 step-line sm:block"></span>
+            </div>
+            <p class="step-label mt-2 text-[11px] leading-tight text-slate-500">Remediation</p>
+          </li>
+          <li data-step="5" class="step">
+            <div class="flex items-center gap-2">
+              <span class="step-dot flex h-6 w-6 items-center justify-center rounded-full border border-line bg-ink text-[11px] text-slate-500">5</span>
+            </div>
+            <p class="step-label mt-2 text-[11px] leading-tight text-slate-500">Verification</p>
+          </li>
+        </ol>
+      </div>
+
+      <!-- Terminal -->
+      <div class="scanline relative overflow-hidden rounded-2xl border border-line bg-black/70 shadow-card">
+        <div class="flex items-center justify-between border-b border-line/80 px-5 py-3">
+          <div class="flex items-center gap-2">
+            <span class="h-2.5 w-2.5 rounded-full bg-red-500/80"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-amber-400/80"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-emerald-400/80"></span>
+            <span class="ml-2 text-[11px] text-slate-500">kubeagent@sre — neural stream</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <span id="stream-target" class="text-[10px] text-slate-600">no incident selected</span>
+            <button id="clear-terminal" class="rounded-md border border-line p-1.5 text-slate-500 transition hover:border-emerald-500/40 hover:text-emerald-300" title="Clear terminal">
+              <i data-lucide="eraser" class="h-3.5 w-3.5"></i>
+            </button>
+          </div>
+        </div>
+
+        <div id="terminal" class="terminal-scroll h-[420px] space-y-1.5 overflow-y-auto bg-black/40 px-5 py-4 text-[12.5px] leading-relaxed text-emerald-300 sm:text-[13px]">
+          <div class="text-slate-500">
+            <span class="text-emerald-500">$</span> kubeagent watch --namespace default
+          </div>
+          <div class="cursor text-slate-600">waiting for an incident stream…</div>
+        </div>
+      </div>
+
+      <p class="px-1 text-[10px] leading-relaxed text-slate-600">
+        Stream endpoint: <code class="text-slate-500">GET /api/v1/incidents/&lt;id&gt;/stream</code> ·
+        Auto-reconnects with exponential backoff · Simulation mode never touches a live cluster.
+      </p>
+    </section>
+  </main>
+
+  <script>
+    "use strict";
+
+    const $ = (selector) => document.querySelector(selector);
+    const API = {
+      health: "/api/v1/cluster/health",
+      incidents: "/api/v1/incidents",
+      simulate: "/api/v1/incidents/simulate",
+      approve: (id) => `/api/v1/incidents/${id}/approve`,
+      resolve: (id) => `/api/v1/incidents/${id}/resolve`,
+      stream: (id) => `/api/v1/incidents/${id}/stream`,
+    };
+
+    const state = {
+      incidents: [],
+      health: null,
+      currentId: null,
+      source: null,
+      retry: 0,
+      retryTimer: null,
+      step: 0,
+      simulation: true,
+    };
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+      if (!response.ok) {
+        throw new Error(`${response.status} ${await response.text()}`);
+      }
+      return response.json();
+    }
+
+    // ---------------------------------------------------------------- badges
+    function setConnection(kind, label) {
+      const badge = $("#connection-badge");
+      const dot = $("#connection-dot");
+      const text = $("#connection-text");
+      text.textContent = label;
+      badge.className =
+        "ml-2 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium " +
+        {
+          live: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
+          sim: "border-amber-400/40 bg-amber-400/10 text-amber-300",
+          down: "border-red-400/40 bg-red-400/10 text-red-300",
+        }[kind];
+      dot.className =
+        "inline-block h-2 w-2 rounded-full " +
+        { live: "bg-emerald-400 live-dot", sim: "bg-amber-400 live-dot", down: "bg-red-400" }[kind];
+    }
+
+    function severityBadge(incident) {
+      if (incident.status === "RESOLVED") {
+        return '<span class="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold tracking-wide text-emerald-300">RESOLVED</span>';
+      }
+      if (incident.severity === "critical") {
+        return '<span class="rounded border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-bold tracking-wide text-red-300">CRITICAL</span>';
+      }
+      return '<span class="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold tracking-wide text-amber-300">WARNING</span>';
+    }
+
+    function statusDot(status) {
+      const tone = {
+        OPEN: "bg-amber-400",
+        INVESTIGATING: "bg-sky-400 animate-pulse",
+        AWAITING_APPROVAL: "bg-amber-300 animate-pulse",
+        RESOLVED: "bg-emerald-400",
+      }[status] || "bg-slate-500";
+      return `<span class="inline-block h-1.5 w-1.5 rounded-full ${tone}"></span>`;
+    }
+
+    // ---------------------------------------------------------------- render
+    function renderHealth() {
+      const health = state.health;
+      if (health) {
+        $("#stat-pods").textContent = health.total_pods ?? "—";
+        state.simulation = Boolean(health.simulation_mode);
+      }
+      const active = state.incidents.filter((incident) => incident.status !== "RESOLVED").length;
+      $("#stat-incidents").textContent = active;
+      if (state.source) {
+        setConnection(state.simulation ? "sim" : "live", state.simulation ? "Simulation Mode" : "Connected");
+      } else {
+        setConnection(state.simulation ? "sim" : "down", state.simulation ? "Simulation Mode" : "Disconnected");
+      }
+    }
+
+    function renderFeed() {
+      const feed = $("#incident-feed");
+      if (!state.incidents.length) {
+        feed.innerHTML = '<p class="px-5 py-8 text-center text-[11px] text-slate-600">No incidents yet — inject one above.</p>';
+        return;
+      }
+      feed.innerHTML = state.incidents
+        .map((incident) => {
+          const selected = incident.id === state.currentId;
+          return `
+            <button data-incident="${incident.id}" class="feed-item w-full px-5 py-3.5 text-left transition ${
+              selected ? "bg-emerald-500/5" : "hover:bg-white/[0.02]"
+            }">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <p class="truncate text-[12.5px] font-medium ${selected ? "text-emerald-200" : "text-slate-200"}">
+                    ${statusDot(incident.status)} ${escapeHtml(incident.title)}
+                  </p>
+                  <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-500">
+                    <span class="rounded bg-white/5 px-1.5 py-0.5">${escapeHtml(incident.namespace)}</span>
+                    <span>${escapeHtml(incident.source)}</span>
+                    <span>·</span>
+                    <span>${incident.status.replaceAll("_", " ")}</span>
+                  </p>
+                </div>
+                ${severityBadge(incident)}
+              </div>
+            </button>`;
+        })
+        .join("");
+      feed.querySelectorAll("[data-incident]").forEach((button) => {
+        button.addEventListener("click", () => selectIncident(button.dataset.incident));
+      });
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+      }[char]));
+    }
+
+    // ---------------------------------------------------------------- steps
+    function setStep(step) {
+      state.step = Math.max(state.step, Math.min(step, 5));
+      document.querySelectorAll("[data-step]").forEach((node) => {
+        const index = Number(node.dataset.step);
+        node.classList.toggle("is-done", index < state.step || (state.step === 5 && index === 5));
+        node.classList.toggle("is-active", index === state.step && state.step !== 5);
+      });
+      const tag = $("#pipeline-tag");
+      const labels = ["idle", "ingestion", "metric analysis", "root cause", "remediation", "verification"];
+      tag.textContent = labels[state.step] || "idle";
+      tag.className =
+        "rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider " +
+        (state.step === 5
+          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+          : "border-line bg-ink/60 text-slate-400");
+    }
+
+    function resetSteps() {
+      state.step = 0;
+      document.querySelectorAll("[data-step]").forEach((node) => {
+        node.classList.remove("is-done", "is-active");
+      });
+      setStep(0);
+    }
+
+    // ---------------------------------------------------------------- terminal
+    const TAG_STYLES = {
+      snapshot: "text-slate-500",
+      "incident.created": "text-cyan-300",
+      status: "text-amber-300",
+      "agent.thought": "text-sky-300",
+      "agent.observation": "text-emerald-300",
+      "agent.verification": "text-violet-300",
+      "diagnosis.completed": "text-emerald-400",
+      "approval.granted": "text-emerald-300",
+      error: "text-red-400",
+      ping: "text-slate-700",
+    };
+
+    function appendTerminal(kind, message, detail) {
+      const terminal = $("#terminal");
+      const atBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 60;
+      const line = document.createElement("div");
+      line.className = "flex gap-2";
+
+      const time = document.createElement("span");
+      time.className = "shrink-0 text-slate-600";
+      time.textContent = new Date().toLocaleTimeString("en-GB", { hour12: false });
+
+      const tag = document.createElement("span");
+      tag.className = `shrink-0 font-semibold ${TAG_STYLES[kind] || "text-slate-400"}`;
+      tag.textContent = `[${kind}]`;
+
+      const body = document.createElement("span");
+      body.className = kind === "error" ? "text-red-300" : "text-slate-300";
+      body.textContent = message;
+      if (detail) {
+        const extra = document.createElement("span");
+        extra.className = "ml-2 text-slate-500";
+        extra.textContent = detail;
+        body.appendChild(extra);
+      }
+
+      line.append(time, tag, body);
+      terminal.appendChild(line);
+      if (atBottom) terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    // ---------------------------------------------------------------- stream
+    function closeStream() {
+      if (state.source) {
+        state.source.close();
+        state.source = null;
+      }
+      if (state.retryTimer) {
+        clearTimeout(state.retryTimer);
+        state.retryTimer = null;
+      }
+    }
+
+    function scheduleReconnect() {
+      state.retry += 1;
+      const delay = Math.min(1000 * 2 ** (state.retry - 1), 10000);
+      setConnection("down", `Reconnecting in ${Math.round(delay / 1000)}s`);
+      state.retryTimer = setTimeout(() => connectStream(state.currentId, true), delay);
+    }
+
+    function connectStream(incidentId, isRetry = false) {
+      if (!incidentId) return;
+      closeStream();
+      const source = new EventSource(API.stream(incidentId));
+      state.source = source;
+
+      source.onopen = () => {
+        state.retry = 0;
+        setConnection(state.simulation ? "sim" : "live", state.simulation ? "Simulation Mode" : "Connected");
+      };
+
+      source.onerror = () => {
+        closeStream();
+        if (state.currentId === incidentId) scheduleReconnect();
+      };
+
+      const handlers = {
+        snapshot: (payload) => {
+          if (payload.incident) mergeIncident(payload.incident);
+        },
+        "incident.created": (payload) => {
+          setStep(1);
+          appendTerminal("incident.created", payload.message || payload.incident?.title || "incident created");
+          refreshIncidents();
+        },
+        status: (payload) => {
+          applyStatus(payload.data?.status);
+          appendTerminal("status", payload.message || payload.data?.status || "status update");
+          mergeIncidentStatus(payload.data?.status);
+          refreshIncidents();
+        },
+        "agent.thought": (payload) => {
+          setStep(2);
+          appendTerminal("agent.thought", payload.message || "", payload.data?.tool ? `→ ${payload.data.tool}` : "");
+        },
+        "agent.observation": (payload) => {
+          setStep(2);
+          appendTerminal("agent.observation", payload.message || "", payload.data?.tool ? `→ ${payload.data.tool}` : "");
+        },
+        "agent.verification": (payload) => {
+          setStep(3);
+          appendTerminal("agent.verification", payload.message || "");
+        },
+        "diagnosis.completed": (payload) => {
+          setStep(4);
+          appendTerminal("diagnosis.completed", payload.message || "diagnosis complete");
+          if (payload.data?.diagnosis) {
+            const diagnosis = payload.data.diagnosis;
+            appendTerminal(
+              "diagnosis.completed",
+              `root cause → ${diagnosis.root_cause} (confidence ${Math.round((diagnosis.confidence || 0) * 100)}%)`
+            );
+            (diagnosis.commands || []).slice(0, 3).forEach((command) => {
+              appendTerminal("diagnosis.completed", `next: ${command}`);
+            });
+          }
+          refreshIncidents();
+        },
+        "approval.granted": (payload) => {
+          setStep(4);
+          appendTerminal("approval.granted", payload.message || "remediation approved");
+        },
+        error: (payload) => appendTerminal("error", payload.message || "agent error"),
+      };
+
+      Object.entries(handlers).forEach(([eventName, handler]) => {
+        source.addEventListener(eventName, (event) => {
+          let payload = {};
+          try {
+            payload = JSON.parse(event.data);
+          } catch {
+            payload = { message: event.data };
+          }
+          handler(payload);
+        });
+      });
+
+      if (!isRetry) {
+        appendTerminal("snapshot", `attached to ${incidentId}`);
+      }
+      $("#stream-target").textContent = incidentId;
+    }
+
+    function applyStatus(status) {
+      if (!status) return;
+      if (status === "INVESTIGATING") setStep(2);
+      if (status === "AWAITING_APPROVAL") setStep(4);
+      if (status === "RESOLVED") setStep(5);
+    }
+
+    function mergeIncident(incident) {
+      const index = state.incidents.findIndex((item) => item.id === incident.id);
+      if (index >= 0) state.incidents[index] = incident;
+      else state.incidents.unshift(incident);
+      renderApproval(incident);
+      renderFeed();
+      renderHealth();
+    }
+
+    function mergeIncidentStatus(status) {
+      const incident = state.incidents.find((item) => item.id === state.currentId);
+      if (incident && status) incident.status = status;
+      renderApproval(incident);
+      renderHealth();
+    }
+
+    // ---------------------------------------------------------------- approval
+    function renderApproval(incident) {
+      const banner = $("#approval-banner");
+      if (!incident || incident.status !== "AWAITING_APPROVAL") {
+        banner.classList.add("hidden");
+        return;
+      }
+      const action = incident.diagnosis?.commands?.[0] || incident.diagnosis?.recommended_actions?.[0] || "Apply the proposed remediation";
+      $("#approval-action").textContent = action;
+      banner.classList.remove("hidden");
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    // ---------------------------------------------------------------- actions
+    async function refreshIncidents() {
+      try {
+        state.incidents = await api(API.incidents);
+        renderFeed();
+        renderHealth();
+      } catch (error) {
+        appendTerminal("error", `cannot list incidents: ${error.message}`);
+      }
+    }
+
+    async function selectIncident(incidentId) {
+      if (!incidentId) return;
+      state.currentId = incidentId;
+      state.retry = 0;
+      resetSteps();
+      renderFeed();
+      const incident = state.incidents.find((item) => item.id === incidentId);
+      if (incident) {
+        applyStatus(incident.status);
+        renderApproval(incident);
+      }
+      $("#terminal").innerHTML = "";
+      connectStream(incidentId);
+    }
+
+    async function triggerScenario(scenario, button) {
+      const status = $("#injector-status");
+      status.classList.remove("hidden");
+      status.textContent = `Injecting ${scenario}…`;
+      button.disabled = true;
+      button.classList.add("opacity-60");
+      try {
+        const payload = await api(API.simulate, {
+          method: "POST",
+          body: JSON.stringify({ scenario, auto_analyze: true }),
+        });
+        status.textContent = `Injected ${payload.scenario.incident_type} → ${payload.incident.id}`;
+        await refreshIncidents();
+        await selectIncident(payload.incident.id);
+      } catch (error) {
+        status.textContent = `Injection failed: ${error.message}`;
+      } finally {
+        button.disabled = false;
+        button.classList.remove("opacity-60");
+      }
+    }
+
+    async function approveCurrent() {
+      if (!state.currentId) return;
+      try {
+        await api(API.approve(state.currentId), {
+          method: "POST",
+          body: JSON.stringify({ approved_by: "mission-control", notes: "Approved from Mission Control UI" }),
+        });
+        appendTerminal("approval.granted", "remediation approved by operator");
+        await refreshIncidents();
+        const incident = state.incidents.find((item) => item.id === state.currentId);
+        renderApproval(incident);
+      } catch (error) {
+        appendTerminal("error", `approval failed: ${error.message}`);
+      }
+    }
+
+    async function rejectCurrent() {
+      if (!state.currentId) return;
+      try {
+        await api(API.resolve(state.currentId), { method: "POST" });
+        appendTerminal("status", "remediation rejected — incident closed by operator");
+        await refreshIncidents();
+        renderApproval(state.incidents.find((item) => item.id === state.currentId));
+      } catch (error) {
+        appendTerminal("error", `rejection failed: ${error.message}`);
+      }
+    }
+
+    // ---------------------------------------------------------------- boot
+    function bindEvents() {
+      document.querySelectorAll(".trigger").forEach((button) => {
+        button.addEventListener("click", () => triggerScenario(button.dataset.scenario, button));
+      });
+      $("#refresh-feed").addEventListener("click", refreshIncidents);
+      $("#approve-btn").addEventListener("click", approveCurrent);
+      $("#reject-btn").addEventListener("click", rejectCurrent);
+      $("#clear-terminal").addEventListener("click", () => {
+        $("#terminal").innerHTML = '<div class="text-slate-600">terminal cleared</div>';
+      });
+      window.addEventListener("beforeunload", closeStream);
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && state.currentId && (!state.source || state.source.readyState === EventSource.CLOSED)) {
+          connectStream(state.currentId, true);
+        }
+      });
+    }
+
+    async function boot() {
+      bindEvents();
+      if (window.lucide) window.lucide.createIcons();
+      try {
+        state.health = await api(API.health);
+        state.simulation = Boolean(state.health.simulation_mode);
+      } catch (error) {
+        appendTerminal("error", `cannot read cluster health: ${error.message}`);
+      }
+      await refreshIncidents();
+      renderHealth();
+      if (state.incidents.length) {
+        await selectIncident(state.incidents[0].id);
+      }
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    boot();
+  </script>
+</body>
+</html>

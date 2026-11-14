@@ -1,10 +1,12 @@
 services:
-  api:
+  kubeagent-backend:
     build:
       context: .
       dockerfile: Dockerfile
-    image: kubeagent:local
-    container_name: kubeagent-api
+    image: kubeagent-backend:local
+    container_name: kubeagent-backend
+    # Values from .env override the defaults below; the file is optional so a
+    # fresh clone still boots in simulation mode.
     env_file:
       - path: .env
         required: false
@@ -12,9 +14,13 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       SIMULATION_MODE: ${SIMULATION_MODE:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      # uvicorn listens on 8000 inside the container; map a different host port
+      # with PORT=8080 docker compose up.
       PORT: "8000"
     ports:
       - "${PORT:-8000}:8000"
+    init: true
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]

@@ -185,6 +185,8 @@ def _pod_issue(pod: Any) -> PodIssue:
     status = pod.status
     phase = status.phase or "Unknown"
     containers: list[ContainerStatus] = []
+    last_terminated_reason: str | None = None
+    terminated_reason: str | None = None
 
     for container in status.container_statuses or []:
         waiting = container.state.waiting if container.state and container.state.waiting else None
@@ -200,6 +202,11 @@ def _pod_issue(pod: Any) -> PodIssue:
         message = waiting.message if waiting else (terminated.message if terminated else None)
         exit_code = terminated.exit_code if terminated else None
 
+        if terminated is not None and terminated_reason is None:
+            terminated_reason = terminated.reason
+        if last_terminated is not None and last_terminated_reason is None:
+            last_terminated_reason = last_terminated.reason
+
         containers.append(
             ContainerStatus(
                 name=container.name,
@@ -211,13 +218,9 @@ def _pod_issue(pod: Any) -> PodIssue:
             )
         )
 
-    last_state: str | None = None
-    for container in status.container_statuses or []:
-        if container.last_state and container.last_state.terminated:
-            last_state = container.last_state.terminated.reason
-            break
-        if container.state and container.state.terminated:
-            last_state = container.state.terminated.reason
+    # Prefer the previous run's termination reason (e.g. OOMKilled), then the
+    # current one, then the pod-level reason.
+    last_state = last_terminated_reason or terminated_reason or status.reason
 
     exit_code = next(
         (container.exit_code for container in containers if container.exit_code is not None),
@@ -236,7 +239,7 @@ def _pod_issue(pod: Any) -> PodIssue:
         ready=bool(containers) and all(container.ready for container in containers),
         restarts=sum(container.restarts for container in containers),
         reason=reason,
-        last_state=last_state or status.reason,
+        last_state=last_state,
         exit_code=exit_code,
         image=(pod.spec.containers[0].image if pod.spec and pod.spec.containers else None),
         age_seconds=_age_seconds(pod.metadata.creation_timestamp),

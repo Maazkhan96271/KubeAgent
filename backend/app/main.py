@@ -7,20 +7,27 @@ Run locally with::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 
 from app import __version__
 from app.api import incidents, stream
 from app.config import Settings, get_settings
 
 logger = logging.getLogger("kubeagent")
+
+TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 def configure_logging(settings: Settings) -> None:
@@ -115,14 +122,65 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    @app.get("/", tags=["system"], summary="Service banner")
+    @app.get(
+        f"{settings.api_prefix}/cluster/health",
+        tags=["system"],
+        summary="Cluster health summary for the Mission Control dashboard",
+    )
+    async def cluster_health() -> dict[str, Any]:
+        """Pod counts across the watched namespaces plus the active incident total.
+
+        A namespace whose collector fails is reported in ``errors`` rather than
+        failing the whole request, so the dashboard still renders.
+        """
+        orchestrator = incidents.get_orchestrator()
+        total_pods = 0
+        unhealthy_pods = 0
+        errors: list[str] = []
+
+        for namespace in settings.namespace_list:
+            try:
+                report = await asyncio.to_thread(
+                    orchestrator.k8s.get_unhealthy_pods, namespace
+                )
+            except Exception as exc:  # live clusters can deny or time out
+                errors.append(f"{namespace}: {exc}")
+                continue
+            total_pods += report.total_pods
+            unhealthy_pods += report.unhealthy_count
+
+        active_incidents = sum(
+            1
+            for incident in incidents.store.list(limit=200)
+            if incident.status is not incidents.IncidentStatus.RESOLVED
+        )
+
+        return {
+            "total_pods": total_pods,
+            "unhealthy_pods": unhealthy_pods,
+            "active_incidents": active_incidents,
+            "simulation_mode": settings.simulation_mode,
+            "namespaces": settings.namespace_list,
+            "errors": errors,
+        }
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    async def dashboard(request: Request) -> HTMLResponse:
+        """Serve the single-page Mission Control dashboard."""
+        return templates.TemplateResponse(
+            request=request,
+            name="index.html",
+            context={"app_name": settings.app_name, "app_version": settings.app_version},
+        )
+
+    @app.get(f"{settings.api_prefix}", tags=["system"], summary="Service banner")
     async def root() -> dict[str, str]:
         return {
             "service": settings.app_name,
             "version": settings.app_version,
             "docs": "/docs",
             "health": "/healthz",
-            "api": settings.api_prefix,
+            "dashboard": "/",
         }
 
     return app

@@ -116,11 +116,6 @@ def _deployment_name(pod_name: str) -> str:
     return pod_name
 
 
-def _container_name(issue: dict[str, Any]) -> str:
-    containers = _as_list(issue.get("containers"))
-    return str(containers[0].get("name")) if containers else "app"
-
-
 class AgentOrchestrator:
     """Runs the collect → reason → recommend loop for a single incident."""
 
@@ -396,7 +391,6 @@ class AgentOrchestrator:
         primary = issues[0] if issues else {}
         pod_name = str(primary.get("name") or "the workload")
         deployment = _deployment_name(pod_name)
-        container = _container_name(primary)
 
         if oom_pods:
             issue = oom_pods[0]

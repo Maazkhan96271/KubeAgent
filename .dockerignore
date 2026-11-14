@@ -1,0 +1,37 @@
+# Version control
+.git
+.gitignore
+.dockerignore
+
+# Python caches and virtualenvs
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+kubeconfig
+
+# Tooling / editor noise
+.idea/
+.vscode/
+.DS_Store
+*.log
+logs/
+
+# Frontend is built separately and is not part of the backend image
+frontend/
+node_modules/
