@@ -12,7 +12,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 
@@ -29,6 +29,9 @@ _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 _VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
 
 #: Substrings that make a log line worth quoting as evidence.
+#: Optional hook used by the API layer to stream agent progress over SSE.
+ProgressCallback = Callable[[dict[str, Any]], Awaitable[None]]
+
 _LOG_HINTS = (
     "error",
     "fatal",
@@ -136,10 +139,33 @@ class AgentOrchestrator:
         self.linux = linux or LinuxCollector()
         self.tools: ToolRegistry = build_registry(self.k8s, self.linux)
 
+    async def _notify(
+        self,
+        progress: ProgressCallback | None,
+        phase: str,
+        message: str,
+        *,
+        tool: str | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit a progress event; a failing listener must never break the run."""
+        if progress is None:
+            return
+        try:
+            await progress(
+                {"phase": phase, "message": message, "tool": tool, "data": data or {}}
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("progress callback failed: %s", exc)
+
     # ------------------------------------------------------------------
     # Evidence collection
     # ------------------------------------------------------------------
-    async def collect_evidence(self, incident: dict[str, Any]) -> dict[str, Any]:
+    async def collect_evidence(
+        self,
+        incident: dict[str, Any],
+        progress: ProgressCallback | None = None,
+    ) -> dict[str, Any]:
         """Run every read-only tool that is relevant to the incident."""
         namespace = str(incident.get("namespace") or "default")
         workload = incident.get("workload")
@@ -164,11 +190,24 @@ class AgentOrchestrator:
 
         evidence: dict[str, Any] = {}
         for name, arguments in calls:
+            await self._notify(
+                progress, "thought", f"Collecting evidence with {name}", tool=name
+            )
             try:
                 evidence[name] = await self.tools.execute(name, arguments)
             except Exception as exc:  # one failing collector must not abort the run
                 logger.warning("Tool %s failed: %s", name, exc)
                 evidence[name] = {"error": str(exc)}
+                await self._notify(
+                    progress,
+                    "observation",
+                    f"{name} failed: {exc}",
+                    tool=name,
+                )
+                continue
+            await self._notify(
+                progress, "observation", f"{name} completed", tool=name
+            )
 
         if self.settings.simulation_mode:
             evidence["chaos.simulation"] = self.simulator.host_signals()
@@ -178,19 +217,41 @@ class AgentOrchestrator:
     # ------------------------------------------------------------------
     # Diagnosis
     # ------------------------------------------------------------------
-    async def diagnose(self, incident: dict[str, Any]) -> dict[str, Any]:
+    async def diagnose(
+        self,
+        incident: dict[str, Any],
+        progress: ProgressCallback | None = None,
+    ) -> dict[str, Any]:
         """Return a diagnosis dict ready for ``Diagnosis.model_validate``."""
-        evidence = await self.collect_evidence(incident)
+        await self._notify(
+            progress,
+            "thought",
+            f"Investigating '{incident.get('title') or 'incident'}' in namespace "
+            f"'{incident.get('namespace') or 'default'}'",
+        )
+        evidence = await self.collect_evidence(incident, progress=progress)
 
         if self.settings.llm_enabled:
             try:
-                return await self._llm_diagnosis(incident, evidence)
+                await self._notify(progress, "thought", "Reasoning over the evidence with the LLM")
+                diagnosis = await self._llm_diagnosis(incident, evidence)
+                await self._notify(
+                    progress, "verification", f"Diagnosis ready: {diagnosis.get('root_cause')}"
+                )
+                return diagnosis
             except Exception as exc:
                 logger.warning(
                     "LLM diagnosis failed (%s); falling back to the rule engine", exc
                 )
+                await self._notify(
+                    progress, "observation", f"LLM unavailable ({exc}); using the rule engine"
+                )
 
-        return self._rule_based_diagnosis(incident, evidence)
+        diagnosis = self._rule_based_diagnosis(incident, evidence)
+        await self._notify(
+            progress, "verification", f"Diagnosis ready: {diagnosis.get('root_cause')}"
+        )
+        return diagnosis
 
     async def _llm_diagnosis(
         self, incident: dict[str, Any], evidence: dict[str, Any]
@@ -302,6 +363,7 @@ class AgentOrchestrator:
         memory_percent = _number((_as_dict(metrics.get("memory"))).get("percent"))
         disk_percent = _number((_as_dict(metrics.get("root_disk"))).get("percent"))
         iowait = _number((_as_dict(metrics.get("cpu"))).get("iowait_percent"))
+        cpu_percent = _number((_as_dict(metrics.get("cpu"))).get("percent"))
 
         # Simulated host symptoms stand in for a real host in demo mode.
         zombie_count = int(
@@ -313,6 +375,7 @@ class AgentOrchestrator:
         pid_pressure = bool(zombies.get("pid_pressure")) or zombie_count >= 20
         iowait = max(iowait, _number(simulated_host.get("cpu_iowait_percent")))
         memory_percent = max(memory_percent, _number(simulated_host.get("node_memory_percent")))
+        cpu_percent = max(cpu_percent, _number(simulated_host.get("cpu_percent")))
 
         missing_secret_hint = any(
             token in logs_text.lower()
@@ -420,6 +483,23 @@ class AgentOrchestrator:
             commands = [
                 f"kubectl -n {namespace} describe pod {issue.get('name')}",
                 f"kubectl -n {namespace} get secret",
+            ]
+        elif cpu_percent >= 85.0:
+            root_cause = (
+                f"CPU saturation: the node is at {cpu_percent:.1f}% CPU utilisation and "
+                f"{pod_name} is being throttled, which breaks its liveness probes."
+            )
+            severity = "high"
+            confidence = 0.7
+            actions = [
+                f"Compare the CPU requests/limits of {pod_name} with the node capacity.",
+                "Scale the workload out or raise its CPU limit so throttling stops.",
+                "Move non-critical workloads off the saturated node.",
+            ]
+            commands = [
+                f"kubectl -n {namespace} top pod {pod_name}",
+                f"kubectl -n {namespace} describe pod {pod_name} | grep -A3 Limits",
+                f"kubectl -n {namespace} scale deployment/{deployment} --replicas=4",
             ]
         elif crashloop_pods:
             issue = crashloop_pods[0]
@@ -529,7 +609,8 @@ class AgentOrchestrator:
             )
         if metrics and "error" not in metrics:
             evidence_lines.append(
-                f"host memory at {memory_percent:.1f}% and root disk at {disk_percent:.1f}%"
+                f"host CPU at {cpu_percent:.1f}%, memory at {memory_percent:.1f}% "
+                f"and root disk at {disk_percent:.1f}%"
             )
         if not evidence_lines:
             evidence_lines.append(

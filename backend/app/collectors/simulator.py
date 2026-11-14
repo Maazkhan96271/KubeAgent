@@ -31,6 +31,7 @@ class MockIncidentType(str, Enum):
     OOM_KILLED_PAYMENT_SERVICE = "OOMKilled_Payment_Service"
     ZOMBIE_PROCESS_LEAK = "Zombie_Process_Leak"
     CRASHLOOP_DATABASE_CONFIG = "CrashLoopBackOff_Database_Config"
+    CPU_SPIKE_WORKER_SATURATION = "CPU_Spike_Worker_Saturation"
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +218,7 @@ _DEFAULT_LOGS: str = "\n".join(
 _PAYMENT_POD = "payment-api-7f9d8c6b5-4xk2p"
 _ORDERS_DB_POD = "orders-db-0"
 _PYTHON_WORKER_POD = "python-worker-6b48c9f7d-lm4z9"
+_CPU_SPIKE_POD = "video-transcoder-5f7c8d9b6-9kq2l"
 
 _OOM_TEMPLATE = IncidentTemplate(
     incident_type=MockIncidentType.OOM_KILLED_PAYMENT_SERVICE,
@@ -501,9 +503,102 @@ _DB_CONFIG_TEMPLATE = IncidentTemplate(
 )
 
 
+# ---------------------------------------------------------------------------
+# Scenario (d): CPU saturation / throttling
+# ---------------------------------------------------------------------------
+_CPU_SPIKE_TEMPLATE = IncidentTemplate(
+    incident_type=MockIncidentType.CPU_SPIKE_WORKER_SATURATION,
+    title="video-transcoder saturates worker-2 CPU",
+    description=(
+        "The transcoder deployment runs at its CPU limit, worker-2 is pinned at "
+        "98% utilisation and liveness probes time out. Request latency is burning "
+        "the availability SLO."
+    ),
+    severity="high",
+    namespace="default",
+    workload="video-transcoder",
+    pod_name=_CPU_SPIKE_POD,
+    node="worker-2",
+    signals=[
+        "pod Running but not Ready",
+        "liveness probe timeouts",
+        "CPU throttling 63.4%",
+        "node CPU utilisation 98.7%",
+        "load average 42.1",
+    ],
+    host_signals={
+        "cpu_percent": 98.7,
+        "load_1m": 42.1,
+        "cpu_throttled_percent": 63.4,
+        "node_memory_percent": 71.2,
+    },
+    pods=[
+        _pod(
+            _CPU_SPIKE_POD,
+            node="worker-2",
+            ready=False,
+            restarts=0,
+            reason=None,
+            image="ghcr.io/acme/video-transcoder:1.8.0",
+            message="Liveness probe failed: context deadline exceeded (CPU throttled)",
+            containers=[
+                _container(
+                    "video-transcoder",
+                    ready=False,
+                    restarts=0,
+                    reason=None,
+                    message="container is CPU throttled at 63.4% of its 500m limit",
+                )
+            ],
+            age_seconds=3600,
+        )
+    ],
+    events=[
+        {
+            "type": "Warning",
+            "reason": "Unhealthy",
+            "message": (
+                "Liveness probe failed: Get http://10.244.2.18:9000/healthz: "
+                "context deadline exceeded (client.timeout exceeded while awaiting headers)"
+            ),
+            "object": f"pod/{_CPU_SPIKE_POD}",
+            "count": 21,
+            "last_seen": "2026-11-14T09:46:10Z",
+        },
+        {
+            "type": "Warning",
+            "reason": "CPUThrottlingHigh",
+            "message": (
+                "63.4% throttling of CPU in container video-transcoder for pod "
+                f"{_CPU_SPIKE_POD}"
+            ),
+            "object": f"pod/{_CPU_SPIKE_POD}",
+            "count": 47,
+            "last_seen": "2026-11-14T09:46:22Z",
+        },
+    ],
+    logs="\n".join(
+        [
+            "2026-11-14T09:44:01Z INFO  transcoder worker starting (threads=8)",
+            "2026-11-14T09:44:30Z INFO  job=8f21ae segment 118/240 encoded in 612ms",
+            "2026-11-14T09:45:02Z WARN  encode latency 4.8s for 2s segment (SLO 1.5s)",
+            "2026-11-14T09:45:31Z WARN  cpu throttled: 63.4% of quota, 4120 periods throttled",
+            "2026-11-14T09:45:58Z ERROR liveness endpoint timed out after 5000ms",
+            "2026-11-14T09:46:05Z WARN  queue depth 1840 and growing",
+            "2026-11-14T09:46:10Z ERROR kubelet marked container unready after 3 probe failures",
+        ]
+    ),
+)
+
+
 _TEMPLATES: dict[str, IncidentTemplate] = {
     template.incident_type.value: template
-    for template in (_OOM_TEMPLATE, _ZOMBIE_TEMPLATE, _DB_CONFIG_TEMPLATE)
+    for template in (
+        _OOM_TEMPLATE,
+        _ZOMBIE_TEMPLATE,
+        _DB_CONFIG_TEMPLATE,
+        _CPU_SPIKE_TEMPLATE,
+    )
 }
 
 #: Case-insensitive aliases so demos can trigger with friendly names.
@@ -518,6 +613,12 @@ _ALIASES: dict[str, str] = {
     "database": MockIncidentType.CRASHLOOP_DATABASE_CONFIG.value,
     "db_config": MockIncidentType.CRASHLOOP_DATABASE_CONFIG.value,
     "crashloop": MockIncidentType.CRASHLOOP_DATABASE_CONFIG.value,
+    "config_error": MockIncidentType.CRASHLOOP_DATABASE_CONFIG.value,
+    "config": MockIncidentType.CRASHLOOP_DATABASE_CONFIG.value,
+    "cpu_spike": MockIncidentType.CPU_SPIKE_WORKER_SATURATION.value,
+    "cpu-spike": MockIncidentType.CPU_SPIKE_WORKER_SATURATION.value,
+    "cpuspike": MockIncidentType.CPU_SPIKE_WORKER_SATURATION.value,
+    "cpu": MockIncidentType.CPU_SPIKE_WORKER_SATURATION.value,
 }
 
 
@@ -541,7 +642,14 @@ class SimulatedCluster:
             if isinstance(incident_type, MockIncidentType)
             else str(incident_type).strip()
         )
-        template = _TEMPLATES.get(key) or _TEMPLATES.get(_ALIASES.get(key.lower(), ""))
+        # Accept "OOMKilled", "OOMKilled_Payment_Service", "CPU Spike", "cpu-spike", ...
+        normalized = key.lower().replace(" ", "_").replace("-", "_")
+        by_name = {name.lower(): template for name, template in _TEMPLATES.items()}
+        template = (
+            _TEMPLATES.get(key)
+            or by_name.get(normalized)
+            or _TEMPLATES.get(_ALIASES.get(normalized, ""))
+        )
         if template is None:
             valid = ", ".join(sorted(_TEMPLATES))
             raise ValueError(
