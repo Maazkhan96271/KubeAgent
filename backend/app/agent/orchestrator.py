@@ -28,6 +28,25 @@ logger = logging.getLogger(__name__)
 _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 _VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
 
+#: Substrings that make a log line worth quoting as evidence.
+_LOG_HINTS = (
+    "error",
+    "fatal",
+    "panic",
+    "oom",
+    "killed",
+    "out of memory",
+    "refused",
+    "denied",
+    "not set",
+    "missing",
+    "defunct",
+    "zombie",
+    "resource temporarily unavailable",
+    "eagain",
+    "exit code",
+)
+
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -39,6 +58,13 @@ def _clamp(value: Any, low: float = 0.0, high: float = 1.0) -> float:
     except (TypeError, ValueError):
         return 0.5
     return max(low, min(high, number))
+
+
+def _number(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _extract_json(raw: str) -> dict[str, Any]:
@@ -65,6 +91,33 @@ def _string_list(value: Any, limit: int = 12) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()][:limit]
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _deployment_name(pod_name: str) -> str:
+    """Best-effort deployment name from a ReplicaSet-style pod name.
+
+    StatefulSet pods (``orders-db-0``) and bare pods are returned unchanged so
+    we never suggest rolling a workload that does not exist.
+    """
+    parts = pod_name.rsplit("-", 2)
+    if len(parts) == 3 and not parts[2].isdigit():
+        return parts[0]
+    return pod_name
+
+
+def _container_name(issue: dict[str, Any]) -> str:
+    containers = _as_list(issue.get("containers"))
+    return str(containers[0].get("name")) if containers else "app"
+
+
 class AgentOrchestrator:
     """Runs the collect → reason → recommend loop for a single incident."""
 
@@ -76,8 +129,10 @@ class AgentOrchestrator:
         linux: LinuxCollector | None = None,
     ) -> None:
         self.settings = settings
-        self.simulator = SimulatedCluster()
-        self.k8s = k8s or KubernetesCollector(settings, self.simulator)
+        self.k8s = k8s or KubernetesCollector(settings, SimulatedCluster())
+        # Share the collector's chaos engine so host signals and pod data always
+        # describe the same scenario.
+        self.simulator = self.k8s.simulator
         self.linux = linux or LinuxCollector()
         self.tools: ToolRegistry = build_registry(self.k8s, self.linux)
 
@@ -90,26 +145,34 @@ class AgentOrchestrator:
         workload = incident.get("workload")
 
         calls: list[tuple[str, dict[str, Any]]] = [
-            ("k8s.list_pods", {"namespace": namespace}),
-            ("k8s.list_events", {"namespace": namespace}),
-            ("k8s.node_status", {}),
-            ("linux.host_metrics", {}),
+            ("k8s.unhealthy_pods", {"namespace": namespace}),
+            ("k8s.nodes", {}),
+            ("linux.system_metrics", {}),
+            ("linux.zombie_processes", {}),
         ]
         if workload:
-            calls.append(
+            calls += [
                 (
                     "k8s.pod_logs",
                     {"namespace": namespace, "pod_name": str(workload), "tail_lines": 120},
-                )
-            )
+                ),
+                (
+                    "k8s.pod_events",
+                    {"namespace": namespace, "pod_name": str(workload)},
+                ),
+            ]
 
         evidence: dict[str, Any] = {}
-        for name, arguments in calls[: self.settings.agent_max_steps + 8]:
+        for name, arguments in calls:
             try:
                 evidence[name] = await self.tools.execute(name, arguments)
-            except Exception as exc:  # a single failing collector must not abort the run
+            except Exception as exc:  # one failing collector must not abort the run
                 logger.warning("Tool %s failed: %s", name, exc)
                 evidence[name] = {"error": str(exc)}
+
+        if self.settings.simulation_mode:
+            evidence["chaos.simulation"] = self.simulator.host_signals()
+
         return evidence
 
     # ------------------------------------------------------------------
@@ -183,174 +246,205 @@ class AgentOrchestrator:
         self, incident: dict[str, Any], evidence: dict[str, Any]
     ) -> dict[str, Any]:
         namespace = str(incident.get("namespace") or "default")
-        pods = evidence.get("k8s.list_pods")
-        events = evidence.get("k8s.list_events")
-        nodes = evidence.get("k8s.node_status")
-        host = evidence.get("linux.host_metrics")
 
-        pods = pods if isinstance(pods, list) else []
-        events = events if isinstance(events, list) else []
-        nodes = nodes if isinstance(nodes, list) else []
-        host = host if isinstance(host, dict) and "error" not in host else None
+        report = _as_dict(evidence.get("k8s.unhealthy_pods"))
+        issues = _as_list(report.get("issues"))
+        total_pods = int(_number(report.get("total_pods"), len(issues)))
+        nodes = _as_list(evidence.get("k8s.nodes"))
+        metrics = _as_dict(evidence.get("linux.system_metrics"))
+        zombies = _as_dict(evidence.get("linux.zombie_processes"))
+        logs_result = _as_dict(evidence.get("k8s.pod_logs"))
+        events_report = _as_dict(evidence.get("k8s.pod_events"))
+        chaos = _as_dict(evidence.get("chaos.simulation"))
+        simulated_host = _as_dict(chaos.get("host_signals"))
+
+        logs_text = str(logs_result.get("logs") or "")
+        events = _as_list(events_report.get("events"))
 
         oom_pods = [
-            pod
-            for pod in pods
-            if "oom" in str(pod.get("last_state") or "").lower()
-            or "oom" in str(pod.get("reason") or "").lower()
+            issue
+            for issue in issues
+            if "oom" in f"{issue.get('last_state')} {issue.get('reason')}".lower()
+            or issue.get("exit_code") == 137
         ]
-        crashloop_pods = [
-            pod for pod in pods if "crashloop" in str(pod.get("reason") or "").lower()
+        config_pods = [
+            issue
+            for issue in issues
+            if any(
+                token in str(issue.get("reason") or "").lower()
+                for token in ("createcontainerconfigerror", "configerror", "runcontainererror")
+            )
         ]
         image_pods = [
-            pod
-            for pod in pods
+            issue
+            for issue in issues
             if any(
-                token in str(pod.get("reason") or "").lower()
+                token in str(issue.get("reason") or "").lower()
                 for token in ("imagepull", "errimagepull", "invalidimagename")
             )
         ]
-        not_ready_pods = [
-            pod
-            for pod in pods
-            if not pod.get("ready") and str(pod.get("phase") or "").lower() == "running"
+        crashloop_pods = [
+            issue for issue in issues if "crashloop" in str(issue.get("reason") or "").lower()
         ]
         pending_pods = [
-            pod for pod in pods if str(pod.get("phase") or "").lower() == "pending"
+            issue for issue in issues if str(issue.get("phase") or "").lower() == "pending"
         ]
 
-        node_pressure: list[str] = []
-        for node in nodes:
-            for condition in node.get("conditions") or []:
-                if (
-                    str(condition.get("type")) in {"MemoryPressure", "DiskPressure", "PIDPressure"}
-                    and str(condition.get("status")) == "True"
-                ):
-                    node_pressure.append(
-                        f"node {node.get('name')} reports {condition.get('type')}"
-                    )
+        node_pressure = [
+            f"node {node.get('name')} reports {condition.get('type')}"
+            for node in nodes
+            for condition in _as_list(node.get("conditions"))
+            if condition.get("type")
+            in {"MemoryPressure", "DiskPressure", "PIDPressure"}
+            and condition.get("status") == "True"
+        ]
 
-        host_memory_pct = 0.0
-        host_disk_pct = 0.0
-        if host:
-            host_memory_pct = float((host.get("memory") or {}).get("percent") or 0.0)
-            host_disk_pct = float((host.get("disk_root") or {}).get("percent") or 0.0)
+        memory_percent = _number((_as_dict(metrics.get("memory"))).get("percent"))
+        disk_percent = _number((_as_dict(metrics.get("root_disk"))).get("percent"))
+        iowait = _number((_as_dict(metrics.get("cpu"))).get("iowait_percent"))
 
-        warning_events = [
-            event
-            for event in events
-            if str(event.get("type") or "").lower() == "warning"
-        ][:5]
+        # Simulated host symptoms stand in for a real host in demo mode.
+        zombie_count = int(
+            _number(
+                simulated_host.get("zombie_count"),
+                _number(zombies.get("zombie_count")),
+            )
+        )
+        pid_pressure = bool(zombies.get("pid_pressure")) or zombie_count >= 20
+        iowait = max(iowait, _number(simulated_host.get("cpu_iowait_percent")))
+        memory_percent = max(memory_percent, _number(simulated_host.get("node_memory_percent")))
 
-        evidence_lines: list[str] = []
-        for pod in oom_pods[:3]:
-            evidence_lines.append(
-                f"pod {pod.get('name')} last terminated with "
-                f"{pod.get('last_state')} after {pod.get('restarts')} restarts"
+        missing_secret_hint = any(
+            token in logs_text.lower()
+            for token in (
+                "password is not set",
+                "db_password",
+                "secret",
+                "missing required environment",
+                "could not read secret",
             )
-        for pod in crashloop_pods[:3]:
-            evidence_lines.append(
-                f"pod {pod.get('name')} is in CrashLoopBackOff on node {pod.get('node')}"
-            )
-        for pod in image_pods[:3]:
-            evidence_lines.append(
-                f"pod {pod.get('name')} cannot pull image {pod.get('image')}"
-            )
-        for pod in not_ready_pods[:3]:
-            evidence_lines.append(f"pod {pod.get('name')} is Running but not Ready")
-        for pod in pending_pods[:3]:
-            evidence_lines.append(f"pod {pod.get('name')} is Pending (unscheduled)")
-        evidence_lines.extend(node_pressure[:3])
-        if host:
-            evidence_lines.append(
-                f"host memory at {host_memory_pct:.1f}% and root disk at {host_disk_pct:.1f}%"
-            )
-        for event in warning_events:
-            evidence_lines.append(
-                f"event {event.get('reason')}: {str(event.get('message') or '')[:160]}"
-            )
+        )
 
         # --- Root cause selection -------------------------------------
+        severity = "low"
+        confidence = 0.4
         actions: list[str] = []
         commands: list[str] = []
-        confidence = 0.45
-        healthy = len(pods) - len(
-            {str(pod.get("name")) for pod in oom_pods + crashloop_pods + image_pods + not_ready_pods + pending_pods}
-        )
-        healthy = max(healthy, 0)
+        primary = issues[0] if issues else {}
+        pod_name = str(primary.get("name") or "the workload")
+        deployment = _deployment_name(pod_name)
+        container = _container_name(primary)
 
         if oom_pods:
-            pod = oom_pods[0]
+            issue = oom_pods[0]
+            pod = str(issue.get("name"))
             root_cause = (
-                f"Container memory exhaustion: {pod.get('name')} was OOMKilled "
-                f"by the kubelet on node {pod.get('node')}."
+                f"Container memory exhaustion: {pod} was OOMKilled (exit code "
+                f"{issue.get('exit_code') or 137}) after {issue.get('restarts')} restarts."
             )
             severity = "critical"
-            confidence = 0.78
+            confidence = 0.8
             actions = [
-                f"Inspect the memory limit and recent usage of {pod.get('name')}.",
-                f"Raise the memory limit/request for the {namespace} workload or fix the leak.",
-                "Roll the deployment once the limit is corrected and confirm restarts stop.",
+                f"Confirm the container memory limit and the JVM/heap settings for {pod}.",
+                f"Raise the memory limit of deployment/{_deployment_name(pod)} or fix the allocation leak.",
+                "Roll the deployment and verify restart counts stop increasing for 15 minutes.",
             ]
             commands = [
-                f"kubectl -n {namespace} describe pod {pod.get('name')}",
-                f"kubectl -n {namespace} set resources deployment/{str(pod.get('name')).rsplit('-', 2)[0]} "
+                f"kubectl -n {namespace} describe pod {pod}",
+                f"kubectl -n {namespace} logs {pod} --previous --tail=200",
+                f"kubectl -n {namespace} set resources deployment/{_deployment_name(pod)} "
                 "--limits=memory=1Gi --requests=memory=512Mi",
-                f"kubectl -n {namespace} rollout status deployment/{str(pod.get('name')).rsplit('-', 2)[0]}",
+                f"kubectl -n {namespace} rollout status deployment/{_deployment_name(pod)}",
+            ]
+        elif pid_pressure or zombie_count >= 20:
+            root_cause = (
+                f"PID exhaustion from unreaped child processes: {zombie_count} defunct "
+                f"processes on the host, iowait at {iowait:.1f}%."
+            )
+            severity = "high"
+            confidence = 0.74
+            actions = [
+                f"Confirm the defunct children belong to {pod_name} and identify their parent PID.",
+                "Fix the workload: install a SIGCHLD handler / use subprocess with wait() so children are reaped.",
+                "Restart the leaking container to clear the zombie table, then watch fork() errors disappear.",
+            ]
+            commands = [
+                "ps -eo pid,ppid,stat,comm | awk '$3 ~ /Z/ {print}' | head -n 20",
+                "ps -eo stat | grep -c '^Z'",
+                "cat /proc/sys/kernel/pid_max",
+                f"kubectl -n {namespace} rollout restart deployment/{deployment}",
             ]
         elif node_pressure:
-            root_cause = (
-                "Node-level resource pressure: " + "; ".join(node_pressure) + "."
-            )
+            root_cause = "Node-level resource pressure: " + "; ".join(node_pressure) + "."
             severity = "critical"
             confidence = 0.7
             actions = [
                 "Cordon the pressured node so new pods are not scheduled onto it.",
-                "Evict or move non-critical workloads off the node.",
-                "Verify disk/inode usage and reclaim space before uncordoning.",
+                "Drain or evict non-critical workloads off the node.",
+                "Reclaim memory/PIDs/disk space, then uncordon and confirm conditions clear.",
             ]
             commands = [
                 "kubectl get nodes -o wide",
                 "kubectl describe node <pressured-node> | grep -A5 Conditions",
                 "kubectl cordon <pressured-node>",
             ]
-        elif crashloop_pods:
-            pod = crashloop_pods[0]
+        elif config_pods or missing_secret_hint:
             root_cause = (
-                f"Crash loop in {pod.get('name')}: the container exits repeatedly "
-                f"(reason {pod.get('reason')}) without a recorded OOM kill."
+                f"Configuration error: {pod_name} cannot start because a required "
+                "secret or environment variable (for example DB_PASSWORD) is missing."
             )
             severity = "high"
-            confidence = 0.62
+            confidence = 0.72
             actions = [
-                f"Read the previous container logs for {pod.get('name')}.",
-                "Check configuration and mounted secrets referenced by the pod.",
-                "Roll the deployment after correcting the configuration.",
+                f"Inspect the secret keys referenced by deployment/{deployment}, then confirm DB_PASSWORD exists.",
+                "Create or patch the missing secret key, then delete the failing pod so it is recreated.",
+                "Verify the pod reaches Running/Ready and that the database accepts connections.",
             ]
             commands = [
-                f"kubectl -n {namespace} logs {pod.get('name')} --previous --tail=200",
-                f"kubectl -n {namespace} describe pod {pod.get('name')}",
-                f"kubectl -n {namespace} rollout restart deployment/{str(pod.get('name')).rsplit('-', 2)[0]}",
+                f"kubectl -n {namespace} get secret -o json | jq '.items[].metadata.name'",
+                f"kubectl -n {namespace} describe pod {pod_name}",
+                f"kubectl -n {namespace} logs {pod_name} --previous --tail=100",
+                f"kubectl -n {namespace} delete pod {pod_name}",
             ]
         elif image_pods:
-            pod = image_pods[0]
+            issue = image_pods[0]
             root_cause = (
-                f"Image pull failure: {pod.get('name')} cannot pull {pod.get('image')}."
+                f"Image pull failure: {issue.get('name')} cannot pull {issue.get('image')}."
             )
             severity = "high"
             confidence = 0.8
             actions = [
                 "Verify the image reference and tag exist in the registry.",
-                "Check whether the imagePullSecret is present and still valid.",
+                "Check that the imagePullSecret is present and still valid.",
             ]
             commands = [
-                f"kubectl -n {namespace} describe pod {pod.get('name')}",
+                f"kubectl -n {namespace} describe pod {issue.get('name')}",
                 f"kubectl -n {namespace} get secret",
             ]
-        elif pending_pods:
-            pod = pending_pods[0]
+        elif crashloop_pods:
+            issue = crashloop_pods[0]
+            pod = str(issue.get("name"))
             root_cause = (
-                f"Unschedulable workload: {pod.get('name')} is Pending, usually a "
+                f"Crash loop in {pod}: the container exits repeatedly "
+                f"(exit code {issue.get('exit_code')}, reason {issue.get('reason')}) "
+                "without a recorded OOM kill."
+            )
+            severity = "high"
+            confidence = 0.6
+            actions = [
+                f"Read the previous container logs for {pod} to find the failing startup step.",
+                "Check configuration, mounted secrets and dependency reachability.",
+                "Roll the deployment once the configuration is corrected.",
+            ]
+            commands = [
+                f"kubectl -n {namespace} logs {pod} --previous --tail=200",
+                f"kubectl -n {namespace} describe pod {pod}",
+                f"kubectl -n {namespace} rollout restart deployment/{_deployment_name(pod)}",
+            ]
+        elif pending_pods:
+            issue = pending_pods[0]
+            root_cause = (
+                f"Unschedulable workload: {issue.get('name')} is Pending, usually a "
                 "resource request or taint/toleration mismatch."
             )
             severity = "medium"
@@ -360,28 +454,38 @@ class AgentOrchestrator:
                 "Compare requests/limits against free capacity on the nodes.",
             ]
             commands = [
-                f"kubectl -n {namespace} describe pod {pod.get('name')}",
+                f"kubectl -n {namespace} describe pod {issue.get('name')}",
                 "kubectl describe nodes | grep -A5 'Allocated resources'",
             ]
-        elif host and host_memory_pct >= 85.0:
+        elif issues and not issues[0].get("ready", True):
             root_cause = (
-                f"Host memory pressure on the agent node itself ({host_memory_pct:.1f}% used)."
+                f"{pod_name} is Running but not Ready; probe or dependency failures "
+                "are blocking readiness."
             )
+            severity = "medium"
+            confidence = 0.5
+            actions = [
+                f"Inspect the readiness probe output and recent logs for {pod_name}.",
+                "Confirm downstream dependencies (database, cache, DNS) are reachable.",
+            ]
+            commands = [
+                f"kubectl -n {namespace} describe pod {pod_name}",
+                f"kubectl -n {namespace} logs {pod_name} --tail=200",
+            ]
+        elif memory_percent >= 85.0:
+            root_cause = f"Host memory pressure on the agent node ({memory_percent:.1f}% used)."
             severity = "high"
             confidence = 0.5
             actions = [
                 "Identify the top memory consumers on the host.",
                 "Free memory or add capacity before the kernel starts OOM killing pods.",
             ]
-            commands = [
-                "ps aux --sort=-%mem | head -n 10",
-                "free -h",
-            ]
-        elif host and host_disk_pct >= 85.0:
-            root_cause = f"Host disk pressure ({host_disk_pct:.1f}% used on /)."
+            commands = ["ps aux --sort=-%mem | head -n 10", "free -h"]
+        elif disk_percent >= 85.0:
+            root_cause = f"Host disk pressure ({disk_percent:.1f}% used on /)."
             severity = "medium"
             confidence = 0.5
-            actions = ["Locate large files and prune old container images/logs."]
+            actions = ["Locate large files and prune old container images and logs."]
             commands = ["df -h", "du -xh / --max-depth=1 | sort -h | tail -n 10"]
         else:
             root_cause = (
@@ -396,15 +500,46 @@ class AgentOrchestrator:
             ]
             commands = [f"kubectl -n {namespace} get pods -o wide"]
 
-        summary = (
-            f"{len(pods) - healthy} of {len(pods)} pods in namespace '{namespace}' "
-            f"show unhealthy signals; {len(warning_events)} warning events in the "
-            f"recent event stream."
+        # --- Evidence lines -------------------------------------------
+        evidence_lines: list[str] = []
+        for issue in issues[:5]:
+            evidence_lines.append(
+                f"pod {issue.get('name')} on node {issue.get('node')}: "
+                f"phase={issue.get('phase')}, reason={issue.get('reason')}, "
+                f"restarts={issue.get('restarts')}, exit_code={issue.get('exit_code')}"
+            )
+        evidence_lines.extend(node_pressure[:3])
+
+        log_lines = [line.strip() for line in logs_text.splitlines() if line.strip()]
+        interesting = [
+            line
+            for line in log_lines
+            if any(hint in line.lower() for hint in _LOG_HINTS)
+        ][-5:]
+        evidence_lines.extend(f"log: {line[:200]}" for line in interesting)
+        evidence_lines.extend(
+            f"event {event.get('reason')}: {str(event.get('message') or '')[:160]}"
+            for event in events[:4]
         )
+
+        if zombie_count:
+            evidence_lines.append(
+                f"host reports {zombie_count} defunct processes "
+                f"(iowait {iowait:.1f}%, pid_max {zombies.get('pid_max') or 'unknown'})"
+            )
+        if metrics and "error" not in metrics:
+            evidence_lines.append(
+                f"host memory at {memory_percent:.1f}% and root disk at {disk_percent:.1f}%"
+            )
         if not evidence_lines:
-            evidence_lines = [
-                "No OOM, crash loop, image pull or node pressure signal was observed."
-            ]
+            evidence_lines.append(
+                "No crash loop, OOM, image pull, configuration or host pressure signal observed."
+            )
+
+        summary = (
+            f"{len(issues)} of {total_pods} pods in namespace '{namespace}' are "
+            f"unhealthy; {zombie_count} zombie processes on the host."
+        )
 
         return {
             "summary": summary,
