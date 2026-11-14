@@ -1,0 +1,129 @@
+# Default values for the kubeagent chart.
+# These mirror manifests/*.yaml; change them here when installing with Helm.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/maazkhan96271/kubeagent
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# One replica is intentional: incident state and SSE fan-out are in-process.
+replicaCount: 1
+
+serviceAccount:
+  create: true
+  name: kubeagent-sa
+  annotations: {}
+
+rbac:
+  create: true
+
+# Non-sensitive settings, rendered into a ConfigMap and injected with envFrom.
+config:
+  CLUSTER_NAME: vke-prod
+  ENVIRONMENT: production
+  SIMULATION_MODE: "false"
+  AUTO_REMEDIATE: "false"
+  AGENT_MAX_STEPS: "6"
+  WATCH_NAMESPACES: "default,kubeagent"
+  K8S_TIMEOUT_SECONDS: "10"
+  API_PREFIX: "/api/v1"
+  LOG_LEVEL: INFO
+  CORS_ORIGINS: "https://kubeagent.example.com"
+  LLM_PROVIDER: deepseek
+  LLM_BASE_URL: https://api.deepseek.com/v1
+  LLM_MODEL: deepseek-chat
+  LLM_TEMPERATURE: "0.1"
+  LLM_MAX_TOKENS: "2048"
+  LLM_TIMEOUT_SECONDS: "45"
+
+secrets:
+  # Preferred in production: point at a Secret you manage out-of-band
+  # (External Secrets Operator, Sealed Secrets, Vultr secret store).
+  existingSecret: kubeagent-secrets
+  # Alternatively let the chart create the Secret. Set at install time with
+  #   --set secrets.llmApiKey=...   (avoid committing it in a values file).
+  llmApiKey: ""
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: http
+
+# Vultr managed Load Balancer for the dashboard + API (VKE CCM provisions it).
+loadBalancer:
+  enabled: true
+  annotations:
+    service.beta.kubernetes.io/vultr-loadbalancer-protocol: http
+    service.beta.kubernetes.io/vultr-loadbalancer-backend-protocol: http
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+  host: kubeagent.example.com
+  path: /
+  pathType: Prefix
+  tls:
+    enabled: true
+    secretName: kubeagent-tls
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 192Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 15
+  periodSeconds: 20
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Live-demo fault injector (memory leak until OOMKilled). Off by default.
+chaosDemo:
+  enabled: false
+  namespace: default
+  image: python:3.12-alpine
+  memoryLimit: 128Mi

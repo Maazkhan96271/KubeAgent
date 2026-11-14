@@ -1,0 +1,83 @@
+# ---------------------------------------------------------------------------
+# KubeAgent - deliberate failure generator for live demos
+#
+# Python allocates a 10 MiB block every second and keeps every reference, so
+# the container grows ~10 MiB/s until it crosses its 128Mi limit and is
+# OOMKilled with exit code 137. restartPolicy: Always means the kubelet keeps
+# restarting it, which produces the CrashLoopBackOff + OOMKilled signature the
+# agent's collectors and post-mortem generator recognise.
+#
+# Watch it:  kubectl -n default get pod kubeagent-chaos-memory-hog -w
+#            kubectl -n default logs -f kubeagent-chaos-memory-hog
+# Remove it: kubectl delete -f manifests/chaos-demo-pod.yaml
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kubeagent-chaos-memory-hog
+  namespace: default
+  labels:
+    app.kubernetes.io/name: kubeagent-chaos-demo
+    app.kubernetes.io/component: fault-injection
+  annotations:
+    kubeagent.dev/demo: "memory-leak-oomkill"
+spec:
+  restartPolicy: Always
+  terminationGracePeriodSeconds: 5
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: memory-hog
+      image: python:3.12-alpine
+      command:
+        - python
+        - -u
+        - -c
+      args:
+        - |
+          import os, time
+
+          BLOCK = 10 * 1024 * 1024  # 10 MiB
+          LIMIT_MIB = 128
+          held = []
+          print("chaos demo: allocating 10 MiB/s until OOMKilled", flush=True)
+          while True:
+              held.append(bytearray(BLOCK))
+              rss_mib = int(
+                  open("/proc/self/statm").read().split()[1]
+              ) * os.sysconf("SC_PAGE_SIZE") // (1024 * 1024)
+              print(
+                  f"held={len(held) * 10} MiB rss={rss_mib} MiB "
+                  f"limit={LIMIT_MIB} MiB",
+                  flush=True,
+              )
+              time.sleep(1)
+      ports:
+        - name: metrics
+          containerPort: 9999
+          protocol: TCP
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          # The OOMKill fires shortly after the process passes this ceiling.
+          cpu: 200m
+          memory: 128Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: tmp
+      emptyDir:
+        sizeLimit: 16Mi

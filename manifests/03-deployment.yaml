@@ -1,0 +1,113 @@
+# ---------------------------------------------------------------------------
+# KubeAgent - application Deployment
+#
+# One replica: the incident store and SSE fan-out are in-process, so scaling out
+# without a shared store would split incident state across Pods.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeagent
+  namespace: kubeagent
+  labels:
+    app.kubernetes.io/name: kubeagent
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 300
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kubeagent
+      app.kubernetes.io/component: agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kubeagent
+        app.kubernetes.io/component: agent
+        app.kubernetes.io/version: "0.1.0"
+    spec:
+      serviceAccountName: kubeagent-sa
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kubeagent
+          image: ghcr.io/maazkhan96271/kubeagent:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: kubeagent-config
+          env:
+            # Secret is optional so the Pod still boots (degraded, rule-based
+            # reasoning) before the key is provisioned.
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kubeagent-secrets
+                  key: LLM_API_KEY
+                  optional: true
+            # Read-only root filesystem: anything that wants to write goes /tmp.
+            - name: HOME
+              value: /tmp
+            - name: TMPDIR
+              value: /tmp
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+            successThreshold: 1
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

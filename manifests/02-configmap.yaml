@@ -1,0 +1,69 @@
+# ---------------------------------------------------------------------------
+# KubeAgent - non-sensitive configuration and secret placeholder
+#
+# The ConfigMap maps 1:1 onto the backend Settings object (see
+# backend/app/config.py); every key is read from the environment at startup.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeagent-config
+  namespace: kubeagent
+  labels:
+    app.kubernetes.io/name: kubeagent
+    app.kubernetes.io/component: agent
+data:
+  # --- Cluster identity ---------------------------------------------------
+  CLUSTER_NAME: "vke-prod"
+  ENVIRONMENT: "production"
+
+  # --- Agent safety rails -------------------------------------------------
+  # false = the collectors talk to the real cluster through the in-cluster
+  # ServiceAccount. Set to "true" only for demos that must not touch anything.
+  SIMULATION_MODE: "false"
+  # Remediation still requires an explicit /approve call from a human.
+  AUTO_REMEDIATE: "false"
+  AGENT_MAX_STEPS: "6"
+
+  # --- Watched namespaces (comma separated) -------------------------------
+  WATCH_NAMESPACES: "default,kubeagent"
+  K8S_TIMEOUT_SECONDS: "10"
+
+  # --- HTTP ---------------------------------------------------------------
+  API_PREFIX: "/api/v1"
+  LOG_LEVEL: "INFO"
+  # Same-origin dashboard, so CORS only needs the public host name.
+  CORS_ORIGINS: "https://kubeagent.example.com"
+
+  # --- LLM provider (key lives in the Secret below) -----------------------
+  LLM_PROVIDER: "deepseek"
+  LLM_BASE_URL: "https://api.deepseek.com/v1"
+  LLM_MODEL: "deepseek-chat"
+  LLM_TEMPERATURE: "0.1"
+  LLM_MAX_TOKENS: "2048"
+  LLM_TIMEOUT_SECONDS: "45"
+---
+# ---------------------------------------------------------------------------
+# Secret placeholder for the LLM API key.
+#
+# The checked-in value is a literal marker, not a credential. Replace it at
+# install time and do not commit a real key:
+#
+#   kubectl -n kubeagent create secret generic kubeagent-secrets \
+#     --from-literal=LLM_API_KEY="$LLM_API_KEY" \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#
+# In production prefer an external secret store (Vultr Marketplace Secrets /
+# External Secrets Operator / Sealed Secrets) over this object.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kubeagent-secrets
+  namespace: kubeagent
+  labels:
+    app.kubernetes.io/name: kubeagent
+    app.kubernetes.io/component: agent
+type: Opaque
+stringData:
+  LLM_API_KEY: "REPLACE_WITH_YOUR_LLM_API_KEY"

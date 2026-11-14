@@ -1,0 +1,17 @@
+apiVersion: v2
+name: kubeagent
+description: Autonomous Linux/Kubernetes incident remediation agent (API, dashboard, post-mortem generator)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.28.0-0"
+keywords:
+  - kubernetes
+  - sre
+  - incidents
+  - observability
+home: https://github.com/Maazkhan96271/KubeAgent
+sources:
+  - https://github.com/Maazkhan96271/KubeAgent
+maintainers:
+  - name: Maaz Khan

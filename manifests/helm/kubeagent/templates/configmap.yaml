@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubeagent.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubeagent.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+{{- if not .Values.secrets.existingSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "kubeagent.secretName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubeagent.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  LLM_API_KEY: {{ required "secrets.llmApiKey is required when secrets.existingSecret is empty" .Values.secrets.llmApiKey | quote }}
+{{- end }}

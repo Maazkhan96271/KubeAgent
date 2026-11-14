@@ -1,0 +1,103 @@
+# ---------------------------------------------------------------------------
+# KubeAgent - namespace, ServiceAccount and least-privilege RBAC
+#
+# The agent only ever needs to *read* cluster state, plus the narrow ability to
+# patch/ update Deployments and delete Pods so a remediation can take effect.
+# Secrets, ConfigMaps, RBAC objects and exec are deliberately NOT granted: the
+# agent proposes commands for human approval and never shells into a container.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubeagent
+  labels:
+    app.kubernetes.io/name: kubeagent
+    app.kubernetes.io/part-of: kubeagent
+    # The deployment in 03-deployment.yaml is written to satisfy the restricted
+    # Pod Security Standard (non-root, no privilege escalation, all caps
+    # dropped, RuntimeDefault seccomp).
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubeagent-sa
+  namespace: kubeagent
+  labels:
+    app.kubernetes.io/name: kubeagent
+    app.kubernetes.io/component: agent
+  # Never mount an API token unless a Pod asks for it.
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeagent-reader-remediator
+  labels:
+    app.kubernetes.io/name: kubeagent
+    app.kubernetes.io/component: agent
+rules:
+  # --- Read-only inventory ------------------------------------------------
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - nodes
+      - events
+      - namespaces
+      - services
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
+  # Node metrics (kubelet summary API) for capacity and pressure signals.
+  - apiGroups: [""]
+    resources:
+      - nodes/metrics
+      - nodes/proxy
+      - nodes/stats
+    verbs:
+      - get
+  # Deployments are read so the agent can reason about desired replicas, then
+  # patched for the only remediation it performs directly: restart/ scale.
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+    verbs:
+      - patch
+      - update
+  # A stuck Pod is deleted so its controller recreates it. Deletion is the
+  # documented remediation for OOMKilled/CrashLoopBackOff containers.
+  - apiGroups: [""]
+    resources:
+      - pods
+    verbs:
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeagent-reader-remediator
+  labels:
+    app.kubernetes.io/name: kubeagent
+    app.kubernetes.io/component: agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeagent-reader-remediator
+subjects:
+  - kind: ServiceAccount
+    name: kubeagent-sa
+    namespace: kubeagent

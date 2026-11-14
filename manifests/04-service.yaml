@@ -1,0 +1,91 @@
+# ---------------------------------------------------------------------------
+# KubeAgent - Service and VKE ingress options
+#
+# OPTION A (default, used by the guide): the LoadBalancer Service below makes
+# VKE's cloud controller manager provision a managed Vultr Load Balancer for
+# the dashboard + API. It answers on the internet, so protect it with an
+# allowlist or Front Door/WAF if you expose it beyond a demo.
+#
+# OPTION B (commented out): keep the cluster-internal Service only and route
+# through nginx-ingress + cert-manager for host-based TLS.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeagent
+  namespace: kubeagent
+  labels:
+    app.kubernetes.io/name: kubeagent
+    app.kubernetes.io/component: agent
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: kubeagent
+    app.kubernetes.io/component: agent
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeagent-lb
+  namespace: kubeagent
+  labels:
+    app.kubernetes.io/name: kubeagent
+    app.kubernetes.io/component: ingress
+  annotations:
+    # Vultr CCM annotations. Prefix is service.beta.kubernetes.io/vultr-loadbalancer-
+    service.beta.kubernetes.io/vultr-loadbalancer-protocol: "http"
+    service.beta.kubernetes.io/vultr-loadbalancer-backend-protocol: "http"
+    # For TLS termination at the LB, upload a certificate in the Vultr console
+    # and reference it here (see docs/VKE-DEPLOYMENT.md):
+    # service.beta.kubernetes.io/vultr-loadbalancer-ssl: "kubeagent-example-com"
+    # service.beta.kubernetes.io/vultr-loadbalancer-https-ports: "443"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: kubeagent
+    app.kubernetes.io/component: agent
+  externalTrafficPolicy: Cluster
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+# ---------------------------------------------------------------------------
+# OPTION B: host-based routing with nginx-ingress + cert-manager.
+# Remove the LoadBalancer Service above, then uncomment this Ingress.
+# ---------------------------------------------------------------------------
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: kubeagent
+#   namespace: kubeagent
+#   labels:
+#     app.kubernetes.io/name: kubeagent
+#   annotations:
+#     cert-manager.io/cluster-issuer: letsencrypt-prod
+#     nginx.ingress.kubernetes.io/ssl-redirect: "true"
+#     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"   # SSE stream
+#     nginx.ingress.kubernetes.io/proxy-buffering: "off"       # SSE stream
+# spec:
+#   ingressClassName: nginx
+#   tls:
+#     - hosts:
+#         - kubeagent.example.com
+#       secretName: kubeagent-tls
+#   rules:
+#     - host: kubeagent.example.com
+#       http:
+#         paths:
+#           - path: /
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: kubeagent
+#                 port:
+#                   name: http
