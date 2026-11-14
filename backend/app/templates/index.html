@@ -226,6 +226,21 @@
         </div>
       </div>
 
+      <!-- Post-mortem (unlocked once the incident is resolved) -->
+      <div id="postmortem-bar" class="hidden">
+        <button id="postmortem-btn"
+                class="group flex w-full items-center justify-between rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.07] px-5 py-4 text-left transition hover:border-emerald-400/60 hover:bg-emerald-500/10">
+          <span class="flex items-center gap-3">
+            <i data-lucide="file-text" class="h-5 w-5 text-emerald-300"></i>
+            <span>
+              <span class="block text-sm font-semibold text-emerald-100">View Post-Mortem Report</span>
+              <span class="block text-[11px] text-emerald-300/70">Timeline, RCA, remediation and prevention plan — generated automatically.</span>
+            </span>
+          </span>
+          <i data-lucide="arrow-up-right" class="h-4 w-4 text-emerald-300/70 transition group-hover:text-emerald-200"></i>
+        </button>
+      </div>
+
       <!-- Step indicator -->
       <div class="rounded-2xl border border-line bg-panel/70 px-5 py-4 shadow-card">
         <div class="mb-3 flex items-center justify-between">
@@ -306,6 +321,30 @@
     </section>
   </main>
 
+  <!-- ================= POST-MORTEM MODAL ================= -->
+  <div id="postmortem-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/80 p-3 backdrop-blur-sm sm:p-6">
+    <div class="flex h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-line bg-ink shadow-2xl">
+      <div class="flex items-center justify-between border-b border-line px-5 py-3">
+        <div class="flex items-center gap-2">
+          <i data-lucide="file-text" class="h-4 w-4 text-emerald-400"></i>
+          <h2 class="text-sm font-semibold text-slate-100">Post-Mortem Report</h2>
+          <span id="postmortem-id" class="text-[10px] text-slate-500"></span>
+        </div>
+        <div class="flex items-center gap-2">
+          <a id="postmortem-download" href="#" download
+             class="rounded-md border border-line px-2.5 py-1.5 text-[11px] text-slate-400 transition hover:border-emerald-500/40 hover:text-emerald-300">
+            Download .md
+          </a>
+          <button id="postmortem-close" aria-label="Close"
+                  class="rounded-md border border-line p-1.5 text-slate-400 transition hover:border-red-400/50 hover:text-red-300">
+            <i data-lucide="x" class="h-3.5 w-3.5"></i>
+          </button>
+        </div>
+      </div>
+      <iframe id="postmortem-frame" title="Post-mortem report" class="h-full w-full flex-1 bg-ink"></iframe>
+    </div>
+  </div>
+
   <script>
     "use strict";
 
@@ -317,6 +356,7 @@
       approve: (id) => `/api/v1/incidents/${id}/approve`,
       resolve: (id) => `/api/v1/incidents/${id}/resolve`,
       stream: (id) => `/api/v1/incidents/${id}/stream`,
+      postmortem: (id) => `/api/v1/incidents/${id}/postmortem`,
     };
 
     const state = {
@@ -631,7 +671,32 @@
     }
 
     // ---------------------------------------------------------------- approval
+    function renderPostmortem(incident) {
+      const bar = $("#postmortem-bar");
+      const resolved = Boolean(incident) && incident.status === "RESOLVED";
+      bar.classList.toggle("hidden", !resolved);
+    }
+
+    function openPostmortem() {
+      if (!state.currentId) return;
+      const modal = $("#postmortem-modal");
+      $("#postmortem-frame").src = `${API.postmortem(state.currentId)}?format=html`;
+      $("#postmortem-id").textContent = `· ${state.currentId}`;
+      $("#postmortem-download").href = `${API.postmortem(state.currentId)}?format=markdown`;
+      modal.classList.remove("hidden");
+      modal.classList.add("flex");
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    function closePostmortem() {
+      const modal = $("#postmortem-modal");
+      modal.classList.add("hidden");
+      modal.classList.remove("flex");
+      $("#postmortem-frame").src = "about:blank";
+    }
+
     function renderApproval(incident) {
+      renderPostmortem(incident);
       const banner = $("#approval-banner");
       if (!incident || incident.status !== "AWAITING_APPROVAL") {
         banner.classList.add("hidden");
@@ -664,6 +729,8 @@
       if (incident) {
         applyStatus(incident.status);
         renderApproval(incident);
+      } else {
+        renderPostmortem(null);
       }
       $("#terminal").innerHTML = "";
       connectStream(incidentId);
@@ -727,6 +794,14 @@
       $("#refresh-feed").addEventListener("click", refreshIncidents);
       $("#approve-btn").addEventListener("click", approveCurrent);
       $("#reject-btn").addEventListener("click", rejectCurrent);
+      $("#postmortem-btn").addEventListener("click", openPostmortem);
+      $("#postmortem-close").addEventListener("click", closePostmortem);
+      $("#postmortem-modal").addEventListener("click", (event) => {
+        if (event.target.id === "postmortem-modal") closePostmortem();
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closePostmortem();
+      });
       $("#clear-terminal").addEventListener("click", () => {
         $("#terminal").innerHTML = '<div class="text-slate-600">terminal cleared</div>';
       });

@@ -18,12 +18,14 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from enum import Enum
 from functools import lru_cache
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.agent.orchestrator import AgentOrchestrator
+from app.agent.postmortem import generate_postmortem, render_html
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -694,3 +696,43 @@ async def approve_incident(incident_id: str, payload: ApproveRequest) -> Inciden
 async def resolve_incident(incident_id: str) -> Incident:
     _require(incident_id)
     return store.set_status(incident_id, IncidentStatus.RESOLVED, reason="manually resolved")
+
+
+@router.get(
+    "/{incident_id}/postmortem",
+    summary="Post-mortem and RCA report for an incident",
+    response_class=Response,
+    responses={
+        200: {
+            "content": {
+                "text/markdown": {"schema": {"type": "string"}},
+                "text/html": {"schema": {"type": "string"}},
+            }
+        },
+        404: {"description": "Incident not found"},
+    },
+)
+async def get_postmortem(
+    incident_id: str,
+    output_format: Literal["markdown", "html"] = Query(
+        default="markdown",
+        alias="format",
+        description="Return GitHub-Flavored Markdown or a rendered HTML document.",
+    ),
+) -> Response:
+    """Render the incident timeline, RCA, remediation and prevention advice."""
+    incident = _require(incident_id)
+    events = [event.model_dump(mode="json") for event in store.history(incident_id)]
+    report = generate_postmortem(incident.model_dump(mode="json"), events)
+
+    headers = {
+        "Content-Disposition": f'inline; filename="postmortem-{incident_id}.md"',
+        "X-Postmortem-Id": report.report_id,
+    }
+    if output_format == "html":
+        return HTMLResponse(content=render_html(report), headers=headers)
+    return Response(
+        content=report.markdown,
+        media_type="text/markdown; charset=utf-8",
+        headers=headers,
+    )
