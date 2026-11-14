@@ -24,9 +24,11 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.agent.impact import build_impact, build_patch
 from app.agent.orchestrator import AgentOrchestrator
 from app.agent.postmortem import generate_postmortem, render_html
 from app.config import get_settings
+from app.policy import PolicyViolation
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +242,9 @@ class ApproveRequest(BaseModel):
 
     approved_by: str = Field(..., min_length=2, max_length=120)
     notes: str | None = Field(default=None, max_length=2000)
+    #: Set when an operator deliberately overrides a protected-namespace or
+    #: read-only policy decision; the approval record keeps who did it.
+    override: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -667,6 +672,20 @@ async def approve_incident(incident_id: str, payload: ApproveRequest) -> Inciden
             ),
         )
 
+    # Imported lazily: the system router depends on this module.
+    from app.api.system import get_policy
+
+    policy = get_policy()
+    try:
+        policy.check_approval(
+            namespace=incident.namespace,
+            override=payload.override,
+            approved_by=payload.approved_by,
+        )
+    except PolicyViolation as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    policy.record_success(incident.namespace)
+
     approval = ApprovalRecord(
         approved_by=payload.approved_by,
         notes=payload.notes,
@@ -696,6 +715,34 @@ async def approve_incident(incident_id: str, payload: ApproveRequest) -> Inciden
 async def resolve_incident(incident_id: str) -> Incident:
     _require(incident_id)
     return store.set_status(incident_id, IncidentStatus.RESOLVED, reason="manually resolved")
+
+
+@router.get(
+    "/{incident_id}/patch",
+    summary="Declarative before/after patch for the proposed remediation",
+)
+async def incident_patch(incident_id: str) -> dict[str, Any]:
+    incident = _require(incident_id)
+    diagnosis = incident.diagnosis.model_dump(mode="json") if incident.diagnosis else None
+    return build_patch(incident.model_dump(mode="json"), diagnosis)
+
+
+@router.get(
+    "/{incident_id}/impact",
+    summary="Blast-radius assessment and rollback plan",
+)
+async def incident_impact(incident_id: str) -> dict[str, Any]:
+    incident = _require(incident_id)
+    diagnosis = incident.diagnosis.model_dump(mode="json") if incident.diagnosis else None
+    report: dict[str, Any] | None = None
+    try:
+        collected = await asyncio.to_thread(
+            get_orchestrator().k8s.get_unhealthy_pods, incident.namespace
+        )
+        report = collected.model_dump(mode="json")
+    except Exception as exc:  # a missing live cluster must not block the preview
+        logger.warning("impact assessment could not read pods: %s", exc)
+    return build_impact(incident.model_dump(mode="json"), diagnosis, report)
 
 
 @router.get(

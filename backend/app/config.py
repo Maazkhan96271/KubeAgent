@@ -71,6 +71,17 @@ class Settings(BaseSettings):
     auto_remediate: bool = False
 
     # ------------------------------------------------------------------
+    # SRE safety policy (enforced on every remediation approval)
+    # ------------------------------------------------------------------
+    #: Reject every approval: diagnostics still run, remediation is blocked.
+    read_only_mode: bool = False
+    #: Namespaces that always require an explicit override to remediate.
+    policy_protected_namespaces: str = "production"
+    #: Maximum remediation approvals allowed inside the policy window.
+    policy_max_approvals_per_window: int = Field(default=2, ge=1, le=50)
+    policy_window_seconds: int = Field(default=300, ge=10, le=86400)
+
+    # ------------------------------------------------------------------
     # LLM provider (DeepSeek / OpenAI compatible chat completions API)
     # ------------------------------------------------------------------
     llm_provider: str = "deepseek"
@@ -154,6 +165,15 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         """CORS origins as a list; ``*`` disables credentials in the app."""
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def policy_protected_namespace_list(self) -> list[str]:
+        """Namespaces that require an explicit override before remediation."""
+        return [
+            namespace.strip()
+            for namespace in self.policy_protected_namespaces.split(",")
+            if namespace.strip()
+        ]
 
     @property
     def namespace_list(self) -> list[str]:

@@ -23,12 +23,12 @@ from fastapi.templating import Jinja2Templates
 
 try:  # normal path: `uvicorn app.main:app`, the Docker image, tests
     from app import __version__
-    from app.api import incidents, stream
+    from app.api import incidents, stream, system
     from app.config import Settings, get_settings
 except ModuleNotFoundError:  # `python -m backend.app.main` from the repo root
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from app import __version__
-    from app.api import incidents, stream
+    from app.api import incidents, stream, system
     from app.config import Settings, get_settings
 
 logger = logging.getLogger("kubeagent")
@@ -112,6 +112,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(incidents.router, prefix=settings.api_prefix)
     app.include_router(stream.router, prefix=settings.api_prefix)
+    app.include_router(system.router, prefix=settings.api_prefix)
+    app.include_router(system.metrics_router)
 
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon() -> Response:

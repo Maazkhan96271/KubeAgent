@@ -1,356 +1,429 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>KubeAgent // Autonomous SRE</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KubeAgent // Autonomous SRE Mission Control</title>
   <!-- Inline icon so the page never requests a missing /favicon.ico -->
-  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='8'%20fill='%23020617'/%3E%3Ccircle%20cx='16'%20cy='16'%20r='9'%20fill='none'%20stroke='%2334d399'%20stroke-width='2'/%3E%3Ccircle%20cx='16'%20cy='16'%20r='2.5'%20fill='%2334d399'/%3E%3C/svg%3E" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='8'%20fill='%23090d16'/%3E%3Ccircle%20cx='16'%20cy='16'%20r='9'%20fill='none'%20stroke='%2338bdf8'%20stroke-width='2'/%3E%3Ccircle%20cx='16'%20cy='16'%20r='2.5'%20fill='%2338bdf8'/%3E%3C/svg%3E">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
   <script>
     tailwind.config = {
+      darkMode: "class",
       theme: {
         extend: {
-          colors: {
-            ink: "#020617",
-            panel: "#0b1220",
-            line: "#1e293b",
-          },
           fontFamily: {
-            mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+            sans: ["Inter", "sans-serif"],
+            mono: ['"JetBrains Mono"', "monospace"],
           },
-          boxShadow: {
-            glow: "0 0 24px rgba(16, 185, 129, 0.18)",
-            card: "0 18px 48px -24px rgba(0, 0, 0, 0.9)",
+          colors: {
+            sre: {
+              bg: "#09090b",
+              surface: "#121214",
+              card: "#18181b",
+              border: "#27272a",
+              accent: "#38bdf8",
+              success: "#10b981",
+              warning: "#f59e0b",
+              danger: "#f43f5e",
+            },
+            // Legacy tokens kept so shared helpers keep working.
+            ink: "#09090b",
+            panel: "#18181b",
+            line: "#27272a",
           },
         },
       },
     };
   </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
-  <script src="https://unpkg.com/lucide@latest"></script>
+
   <style>
     html { color-scheme: dark; }
     body {
-      background-color: #020617;
+      background-color: #09090b;
       background-image:
-        radial-gradient(900px 500px at 12% -10%, rgba(16, 185, 129, 0.10), transparent 60%),
-        radial-gradient(800px 500px at 92% 0%, rgba(56, 189, 248, 0.10), transparent 55%),
-        linear-gradient(rgba(30, 41, 59, 0.28) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(30, 41, 59, 0.28) 1px, transparent 1px);
-      background-size: auto, auto, 42px 42px, 42px 42px;
-    }
-    .scanline::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background: repeating-linear-gradient(
-        to bottom,
-        rgba(16, 185, 129, 0.035) 0px,
-        rgba(16, 185, 129, 0.035) 1px,
-        transparent 1px,
-        transparent 4px
-      );
-      pointer-events: none;
+        radial-gradient(920px 520px at 8% -12%, rgba(56, 189, 248, 0.08), transparent 60%),
+        radial-gradient(760px 480px at 94% -4%, rgba(16, 185, 129, 0.06), transparent 58%);
+      background-attachment: fixed;
     }
     .terminal-scroll::-webkit-scrollbar { width: 9px; }
-    .terminal-scroll::-webkit-scrollbar-track { background: #020617; }
-    .terminal-scroll::-webkit-scrollbar-thumb { background: #1f3d33; border-radius: 999px; }
-    .terminal-scroll::-webkit-scrollbar-thumb:hover { background: #2f6350; }
-    @keyframes pulseRing {
-      0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); }
-      70% { box-shadow: 0 0 0 9px rgba(52, 211, 153, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+    .terminal-scroll::-webkit-scrollbar-track { background: #09090b; }
+    .terminal-scroll::-webkit-scrollbar-thumb { background: #27272a; border-radius: 999px; }
+    .terminal-scroll::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+    @keyframes paletteIn {
+      from { opacity: 0; transform: translateY(-6px) scale(0.985); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
     }
-    .live-dot { animation: pulseRing 2.1s infinite; }
-    @keyframes blinkCursor { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
-    .cursor::after {
-      content: "▌";
-      margin-left: 2px;
-      color: #34d399;
-      animation: blinkCursor 1.1s step-end infinite;
+    .palette-panel {
+      animation: paletteIn 140ms ease-out;
+      will-change: transform, opacity;
+      backface-visibility: hidden;
     }
-    .step-line { background: linear-gradient(90deg, #1e293b, #1e293b); }
-    [data-step].is-done .step-dot { background-color: #10b981; border-color: #10b981; color: #022c22; }
+    @media (prefers-reduced-motion: reduce) {
+      .palette-panel { animation: none; }
+      * { scroll-behavior: auto !important; }
+    }
+    @keyframes livePulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); }
+      70% { box-shadow: 0 0 0 5px rgba(52, 211, 153, 0); }
+    }
+    .live-dot { animation: livePulse 2s infinite; }
+    [data-step].is-done .step-dot { background-color: #10b981; border-color: #10b981; color: #052e22; }
     [data-step].is-active .step-dot {
-      background-color: #022c22;
-      border-color: #34d399;
-      color: #6ee7b7;
-      box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.16);
+      background-color: #0ea5e9; border-color: #38bdf8; color: #04121f;
+      box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.18);
     }
     [data-step].is-done .step-label, [data-step].is-active .step-label { color: #e2e8f0; }
+    .scanline::after {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: repeating-linear-gradient(to bottom, rgba(56, 189, 248, 0.03) 0px, rgba(56, 189, 248, 0.03) 1px, transparent 1px, transparent 4px);
+    }
   </style>
 </head>
-<body class="min-h-screen font-mono text-slate-200 antialiased">
+<body class="bg-sre-bg text-slate-200 font-sans min-h-screen flex flex-col">
 
-  <!-- ================= TOP NAVIGATION ================= -->
-  <header class="sticky top-0 z-30 border-b border-line/80 bg-ink/80 backdrop-blur-xl">
-    <div class="mx-auto flex max-w-[1600px] flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+  <!-- ================= TOP STATUS BAR ================= -->
+  <header class="bg-sre-surface border-b border-sre-border px-4 py-2.5">
+    <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
 
-      <div class="flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 shadow-glow">
-          <i data-lucide="radar" class="h-5 w-5 text-emerald-300"></i>
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="h-7 w-7 rounded bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400 font-bold font-mono text-sm">
+          ⎈
         </div>
         <div>
-          <h1 class="text-base font-bold tracking-tight text-slate-50">
-            KubeAgent <span class="text-emerald-400">//</span> Autonomous SRE
+          <h1 class="text-sm font-bold text-white tracking-wide flex items-center gap-2">
+            KubeAgent
+            <span class="text-[10px] px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 font-mono font-medium">MISSION CONTROL</span>
           </h1>
-          <p class="text-[11px] uppercase tracking-[0.22em] text-slate-500">Mission Control</p>
         </div>
+        <button id="palette-open" type="button" title="Open command palette (⌘K / Ctrl+K)"
+                class="inline-flex items-center gap-1.5 rounded-md border border-sre-border bg-sre-card px-2.5 py-1 text-[11px] font-mono text-slate-400 transition-colors hover:border-sky-500/40 hover:text-sky-300">
+          <i data-lucide="command" class="h-3 w-3"></i> ⌘K
+        </button>
 
-        <span id="connection-badge"
-              class="ml-2 inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-3 py-1 text-[11px] font-medium text-emerald-300">
-          <span id="connection-dot" class="live-dot inline-block h-2 w-2 rounded-full bg-emerald-400"></span>
-          <span id="connection-text">Connecting…</span>
+        <div class="h-4 w-px bg-slate-700 mx-1"></div>
+        <span class="text-[11px] font-mono text-slate-400">
+          CLUSTER: <span id="cluster-label" class="text-emerald-400 font-bold">connecting…</span>
         </span>
+        <span class="text-[11px] font-mono text-slate-400">
+          SIM: <span id="sim-label" class="text-slate-200 font-semibold">—</span>
+        </span>
+      </div>
+
+      <!-- Live vitals + engine + connection -->
+      <div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] font-mono">
+        <div class="flex items-center gap-2">
+          <span class="text-slate-400">PODS:</span>
+          <span id="stat-pods" class="text-slate-100 font-semibold">—</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-slate-400">ACTIVE:</span>
+          <span id="stat-incidents" class="text-amber-300 font-bold">0</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-slate-400">MTTR AVG:</span>
+          <span id="stat-mttr" class="text-emerald-400 font-bold">—</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-slate-400">MODE:</span>
+          <span class="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 font-semibold">HITL_GUARDED</span>
+        </div>
 
         <span id="engine-badge"
               title="Reasoning engine"
-              class="inline-flex items-center gap-2 rounded-full border border-line bg-panel/80 px-3 py-1 text-[11px] font-medium text-slate-400">
+              class="inline-flex items-center gap-2 rounded-full border border-sre-border bg-sre-card/60 px-3 py-1 font-medium text-slate-400">
           <span class="inline-block h-2 w-2 rounded-full bg-slate-500"></span>
           <span id="engine-text">Reasoning…</span>
         </span>
-      </div>
 
-      <div class="grid grid-cols-3 gap-3 sm:gap-4">
-        <div class="rounded-xl border border-line bg-panel/80 px-4 py-2.5 shadow-card">
-          <div class="flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500">
-            <i data-lucide="box" class="h-3 w-3"></i> Total Pods
-          </div>
-          <div id="stat-pods" class="mt-1 text-xl font-bold text-slate-100">—</div>
-        </div>
-        <div class="rounded-xl border border-line bg-panel/80 px-4 py-2.5 shadow-card">
-          <div class="flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500">
-            <i data-lucide="siren" class="h-3 w-3"></i> Active Incidents
-          </div>
-          <div id="stat-incidents" class="mt-1 text-xl font-bold text-amber-300">0</div>
-        </div>
-        <div class="rounded-xl border border-line bg-panel/80 px-4 py-2.5 shadow-card">
-          <div class="flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500">
-            <i data-lucide="trending-down" class="h-3 w-3"></i> Avg MTTR
-          </div>
-          <div class="mt-1 flex items-baseline gap-2">
-            <span class="text-xl font-bold text-emerald-300">-78%</span>
-            <span class="text-[10px] text-slate-500">reduction</span>
-          </div>
-        </div>
+        <span id="connection-badge"
+              class="inline-flex items-center gap-2 rounded-full border border-slate-500/40 bg-slate-500/10 px-3 py-1 font-medium text-slate-300">
+          <span id="connection-dot" class="inline-block h-2 w-2 rounded-full bg-slate-400"></span>
+          <span id="connection-text">Connecting…</span>
+        </span>
       </div>
+    </div>
+
+    <!-- Investigation pipeline -->
+    <div class="mt-3 flex flex-wrap items-center gap-3 border-t border-sre-border/70 pt-2.5">
+      <span class="text-[10px] font-mono uppercase tracking-wider text-slate-500">Pipeline</span>
+      <ol class="flex flex-1 flex-wrap items-center gap-1.5 sm:gap-3">
+        <li data-step="1" class="step flex items-center gap-1.5">
+          <span class="step-dot flex h-5 w-5 items-center justify-center rounded-full border border-sre-border bg-black/40 text-[10px] text-slate-500">1</span>
+          <span class="step-label text-[10.5px] text-slate-500">Ingestion</span>
+        </li>
+        <li data-step="2" class="step flex items-center gap-1.5">
+          <span class="step-dot flex h-5 w-5 items-center justify-center rounded-full border border-sre-border bg-black/40 text-[10px] text-slate-500">2</span>
+          <span class="step-label text-[10.5px] text-slate-500">Metric Analysis</span>
+        </li>
+        <li data-step="3" class="step flex items-center gap-1.5">
+          <span class="step-dot flex h-5 w-5 items-center justify-center rounded-full border border-sre-border bg-black/40 text-[10px] text-slate-500">3</span>
+          <span class="step-label text-[10.5px] text-slate-500">Root Cause</span>
+        </li>
+        <li data-step="4" class="step flex items-center gap-1.5">
+          <span class="step-dot flex h-5 w-5 items-center justify-center rounded-full border border-sre-border bg-black/40 text-[10px] text-slate-500">4</span>
+          <span class="step-label text-[10.5px] text-slate-500">Remediation</span>
+        </li>
+        <li data-step="5" class="step flex items-center gap-1.5">
+          <span class="step-dot flex h-5 w-5 items-center justify-center rounded-full border border-sre-border bg-black/40 text-[10px] text-slate-500">5</span>
+          <span class="step-label text-[10.5px] text-slate-500">Verification</span>
+        </li>
+      </ol>
+      <span id="pipeline-tag" class="rounded border border-line px-2 py-0.5 text-[10px] uppercase tracking-wider text-slate-400">idle</span>
     </div>
   </header>
 
-  <!-- ================= MAIN GRID ================= -->
-  <main class="mx-auto grid max-w-[1600px] grid-cols-1 gap-5 px-5 py-6 xl:grid-cols-12">
+  <!-- ================= MAIN SRE CONTROL GRID ================= -->
+  <main class="flex-1 grid grid-cols-1 gap-3 p-3 xl:grid-cols-12">
 
-    <!-- ---------- LEFT: INJECTOR + FEED ---------- -->
-    <section class="space-y-5 xl:col-span-4">
+    <!-- ---------- LEFT: CHAOS + INCIDENT QUEUE ---------- -->
+    <section class="flex flex-col gap-3 xl:col-span-3">
 
-      <div class="rounded-2xl border border-line bg-panel/70 p-5 shadow-card">
-        <div class="mb-4 flex items-center justify-between">
-          <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-200">
-            <i data-lucide="flask-conical" class="h-4 w-4 text-fuchsia-400"></i>
-            Chaos Incident Injector
-          </h2>
-          <span class="rounded border border-fuchsia-500/30 bg-fuchsia-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-fuchsia-300">sandbox</span>
+      <div class="bg-sre-surface border border-sre-border rounded-lg p-3">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[11px] font-mono font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+            <i data-lucide="zap" class="w-3.5 h-3.5 text-amber-400"></i> Chaos Injector
+          </span>
+          <span class="text-[10px] font-mono text-slate-500">live sandbox</span>
         </div>
-
-        <p class="mb-4 text-[11px] leading-relaxed text-slate-500">
-          Inject a deterministic failure into the simulated cluster. The agent picks it up, investigates and
-          proposes remediation for human approval.
-        </p>
-
-        <div class="space-y-2.5">
-          <button data-scenario="OOMKilled"
-                  class="trigger group flex w-full items-center justify-between rounded-xl border border-red-500/25 bg-red-500/5 px-4 py-3 text-left transition hover:border-red-400/60 hover:bg-red-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50">
-            <span class="flex items-center gap-3">
-              <i data-lucide="memory-stick" class="h-4 w-4 text-red-400"></i>
-              <span class="text-sm text-slate-200">Simulate OOMKill</span>
-            </span>
-            <i data-lucide="play" class="h-3.5 w-3.5 text-slate-600 transition group-hover:text-red-300"></i>
+        <div class="grid grid-cols-1 gap-2">
+          <button data-scenario="OOMKilled" class="trigger w-full text-left px-3 py-2 bg-sre-card hover:bg-slate-700/60 border border-sre-border rounded text-xs font-mono flex items-center justify-between transition-all disabled:opacity-60">
+            <span class="text-rose-300">💥 Inject OOMKill (Exit 137)</span>
+            <span class="text-[10px] bg-rose-500/20 text-rose-300 px-1.5 py-0.5 rounded">P1</span>
           </button>
-
-          <button data-scenario="Zombie_Process_Leak"
-                  class="trigger group flex w-full items-center justify-between rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-3 text-left transition hover:border-amber-400/60 hover:bg-amber-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50">
-            <span class="flex items-center gap-3">
-              <i data-lucide="cpu" class="h-4 w-4 text-amber-400"></i>
-              <span class="text-sm text-slate-200">Simulate Zombie CPU Spike</span>
-            </span>
-            <i data-lucide="play" class="h-3.5 w-3.5 text-slate-600 transition group-hover:text-amber-300"></i>
+          <button data-scenario="Zombie_Process_Leak" class="trigger w-full text-left px-3 py-2 bg-sre-card hover:bg-slate-700/60 border border-sre-border rounded text-xs font-mono flex items-center justify-between transition-all disabled:opacity-60">
+            <span class="text-amber-300">⚠️ Zombie PID Exhaustion</span>
+            <span class="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded">P2</span>
           </button>
-
-          <button data-scenario="Config Error"
-                  class="trigger group flex w-full items-center justify-between rounded-xl border border-sky-500/25 bg-sky-500/5 px-4 py-3 text-left transition hover:border-sky-400/60 hover:bg-sky-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50">
-            <span class="flex items-center gap-3">
-              <i data-lucide="file-warning" class="h-4 w-4 text-sky-400"></i>
-              <span class="text-sm text-slate-200">Simulate CrashLoopBackOff</span>
-            </span>
-            <i data-lucide="play" class="h-3.5 w-3.5 text-slate-600 transition group-hover:text-sky-300"></i>
+          <button data-scenario="Config Error" class="trigger w-full text-left px-3 py-2 bg-sre-card hover:bg-slate-700/60 border border-sre-border rounded text-xs font-mono flex items-center justify-between transition-all disabled:opacity-60">
+            <span class="text-sky-300">🔐 Missing Secret (CrashLoop)</span>
+            <span class="text-[10px] bg-sky-500/20 text-sky-300 px-1.5 py-0.5 rounded">P2</span>
+          </button>
+          <button data-scenario="CPU Spike" class="trigger w-full text-left px-3 py-2 bg-sre-card hover:bg-slate-700/60 border border-sre-border rounded text-xs font-mono flex items-center justify-between transition-all disabled:opacity-60">
+            <span class="text-violet-300">🔥 CPU Saturation (Throttle)</span>
+            <span class="text-[10px] bg-violet-500/20 text-violet-300 px-1.5 py-0.5 rounded">P3</span>
           </button>
         </div>
-
-        <p id="injector-status" class="mt-3 hidden rounded-lg border border-line bg-ink/60 px-3 py-2 text-[11px] text-slate-400"></p>
+        <p id="injector-status" class="mt-2 hidden rounded border border-sre-border bg-black/40 px-2 py-1.5 text-[10.5px] font-mono text-slate-400"></p>
       </div>
 
-      <div class="rounded-2xl border border-line bg-panel/70 shadow-card">
-        <div class="flex items-center justify-between border-b border-line/80 px-5 py-3.5">
-          <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-200">
-            <i data-lucide="list-checks" class="h-4 w-4 text-emerald-400"></i>
-            Active Alerts
-          </h2>
-          <button id="refresh-feed" class="rounded-md border border-line p-1.5 text-slate-500 transition hover:border-emerald-500/40 hover:text-emerald-300" title="Refresh">
-            <i data-lucide="refresh-cw" class="h-3.5 w-3.5"></i>
-          </button>
+      <!-- Safety policy -->
+      <div class="bg-sre-surface border border-sre-border rounded-lg p-3">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[11px] font-mono font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+            <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400"></i> Safety Policy
+          </span>
+          <span id="policy-state" class="text-[10px] font-mono text-emerald-300">HITL ACTIVE</span>
         </div>
-        <div id="incident-feed" class="max-h-[420px] divide-y divide-line/60 overflow-y-auto terminal-scroll">
-          <p class="px-5 py-8 text-center text-[11px] text-slate-600">No incidents yet — inject one above.</p>
+        <label class="flex items-center justify-between gap-2 text-[10.5px] font-mono text-slate-400">
+          Read-only diagnostic mode
+          <input id="policy-readonly" type="checkbox"
+                 class="h-4 w-8 cursor-pointer appearance-none rounded-full bg-slate-600 transition-colors checked:bg-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60">
+        </label>
+        <div class="mt-1.5 flex items-center justify-between text-[10px] font-mono text-slate-500">
+          <span>Protected: <span id="policy-protected" class="text-slate-300">—</span></span>
+          <button id="policy-edit" class="text-sky-400 hover:underline">edit</button>
+        </div>
+        <div class="mt-1 text-[10px] font-mono text-slate-500">Rate limit: <span id="policy-limit" class="text-slate-300">—</span></div>
+        <p id="policy-note" class="mt-1.5 hidden rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-200"></p>
+      </div>
+
+      <div class="bg-sre-surface border border-sre-border rounded-lg flex-1 flex flex-col overflow-hidden min-h-[280px]">
+        <div class="px-3 py-2.5 border-b border-sre-border flex items-center justify-between">
+          <span class="text-[11px] font-mono font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+            <i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-rose-400"></i> Incident Queue
+          </span>
+          <div class="flex items-center gap-2">
+            <span id="queue-count" class="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-mono font-bold">0</span>
+            <button id="refresh-feed" title="Refresh queue" class="rounded border border-sre-border p-1 text-slate-500 transition hover:border-sky-500/40 hover:text-sky-300">
+              <i data-lucide="refresh-cw" class="h-3 w-3"></i>
+            </button>
+          </div>
+        </div>
+        <div id="incident-feed" class="flex-1 max-h-[520px] overflow-y-auto terminal-scroll p-2 space-y-2">
+          <p class="px-3 py-8 text-center text-[11px] font-mono text-slate-600">No incidents yet — inject one above.</p>
         </div>
       </div>
     </section>
 
-    <!-- ---------- RIGHT: STREAM + TERMINAL ---------- -->
-    <section class="space-y-5 xl:col-span-8">
-
-      <!-- HITL approval banner -->
-      <div id="approval-banner" class="hidden overflow-hidden rounded-2xl border border-amber-400/40 bg-amber-500/10 shadow-[0_0_35px_-12px_rgba(251,191,36,0.55)]">
-        <div class="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
-          <div class="flex items-start gap-3">
-            <i data-lucide="shield-alert" class="mt-0.5 h-5 w-5 shrink-0 text-amber-300"></i>
-            <div>
-              <p class="text-[11px] uppercase tracking-[0.2em] text-amber-300/80">Human-in-the-loop approval required</p>
-              <p class="mt-1 text-sm text-slate-100">
-                Agent proposes: <span id="approval-action" class="font-semibold text-amber-200">—</span>
-              </p>
-              <p class="mt-1 text-[11px] text-slate-400">Destructive actions never run without an operator sign-off.</p>
-            </div>
-          </div>
-          <div class="flex shrink-0 gap-2">
-            <button id="approve-btn" class="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-emerald-950 transition hover:bg-emerald-400">
-              <i data-lucide="check" class="h-3.5 w-3.5"></i> Approve Action
-            </button>
-            <button id="reject-btn" class="inline-flex items-center gap-2 rounded-lg border border-line bg-ink px-4 py-2 text-xs font-medium text-slate-300 transition hover:border-red-400/50 hover:text-red-300">
-              <i data-lucide="x" class="h-3.5 w-3.5"></i> Reject
-            </button>
-          </div>
+    <!-- ---------- CENTER: LIVE REASONING STREAM ---------- -->
+    <section class="bg-sre-surface border border-sre-border rounded-lg flex flex-col overflow-hidden xl:col-span-6 min-h-[520px]">
+      <div class="border-b border-sre-border px-4 py-2 flex flex-wrap items-center justify-between gap-2 bg-slate-900/50">
+        <div class="flex items-center gap-2 text-[11px] font-mono">
+          <span class="px-2.5 py-1 bg-sky-500/20 text-sky-300 rounded font-bold border border-sky-500/30">🧠 Neural SRE Trace</span>
+          <span class="text-slate-500">stream target:</span>
+          <span id="stream-target" class="text-slate-400">no incident selected</span>
+        </div>
+        <div class="flex items-center gap-3 text-[10.5px] font-mono">
+          <span class="text-slate-500">SSE</span>
+          <button id="clear-terminal" title="Clear terminal" class="rounded border border-sre-border p-1 text-slate-500 transition hover:border-emerald-500/40 hover:text-emerald-300">
+            <i data-lucide="eraser" class="h-3 w-3"></i>
+          </button>
         </div>
       </div>
 
-      <!-- Post-mortem (unlocked once the incident is resolved) -->
-      <div id="postmortem-bar" class="hidden">
-        <button id="postmortem-btn"
-                class="group flex w-full items-center justify-between rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.07] px-5 py-4 text-left transition hover:border-emerald-400/60 hover:bg-emerald-500/10">
-          <span class="flex items-center gap-3">
-            <i data-lucide="file-text" class="h-5 w-5 text-emerald-300"></i>
-            <span>
-              <span class="block text-sm font-semibold text-emerald-100">View Post-Mortem Report</span>
-              <span class="block text-[11px] text-emerald-300/70">Timeline, RCA, remediation and prevention plan — generated automatically.</span>
-            </span>
-          </span>
-          <i data-lucide="arrow-up-right" class="h-4 w-4 text-emerald-300/70 transition group-hover:text-emerald-200"></i>
-        </button>
-      </div>
-
-      <!-- Step indicator -->
-      <div class="rounded-2xl border border-line bg-panel/70 px-5 py-4 shadow-card">
-        <div class="mb-3 flex items-center justify-between">
-          <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-200">
-            <i data-lucide="git-branch" class="h-4 w-4 text-sky-400"></i>
-            Agent Investigation Pipeline
-          </h2>
-          <span id="pipeline-tag" class="rounded border border-line bg-ink/60 px-2 py-0.5 text-[10px] uppercase tracking-wider text-slate-500">idle</span>
-        </div>
-
-        <ol class="grid grid-cols-1 gap-3 sm:grid-cols-5">
-          <li data-step="1" class="step">
-            <div class="flex items-center gap-2">
-              <span class="step-dot flex h-6 w-6 items-center justify-center rounded-full border border-line bg-ink text-[11px] text-slate-500">1</span>
-              <span class="hidden h-px flex-1 step-line sm:block"></span>
-            </div>
-            <p class="step-label mt-2 text-[11px] leading-tight text-slate-500">Ingestion</p>
-          </li>
-          <li data-step="2" class="step">
-            <div class="flex items-center gap-2">
-              <span class="step-dot flex h-6 w-6 items-center justify-center rounded-full border border-line bg-ink text-[11px] text-slate-500">2</span>
-              <span class="hidden h-px flex-1 step-line sm:block"></span>
-            </div>
-            <p class="step-label mt-2 text-[11px] leading-tight text-slate-500">Metric Analysis</p>
-          </li>
-          <li data-step="3" class="step">
-            <div class="flex items-center gap-2">
-              <span class="step-dot flex h-6 w-6 items-center justify-center rounded-full border border-line bg-ink text-[11px] text-slate-500">3</span>
-              <span class="hidden h-px flex-1 step-line sm:block"></span>
-            </div>
-            <p class="step-label mt-2 text-[11px] leading-tight text-slate-500">Root Cause</p>
-          </li>
-          <li data-step="4" class="step">
-            <div class="flex items-center gap-2">
-              <span class="step-dot flex h-6 w-6 items-center justify-center rounded-full border border-line bg-ink text-[11px] text-slate-500">4</span>
-              <span class="hidden h-px flex-1 step-line sm:block"></span>
-            </div>
-            <p class="step-label mt-2 text-[11px] leading-tight text-slate-500">Remediation</p>
-          </li>
-          <li data-step="5" class="step">
-            <div class="flex items-center gap-2">
-              <span class="step-dot flex h-6 w-6 items-center justify-center rounded-full border border-line bg-ink text-[11px] text-slate-500">5</span>
-            </div>
-            <p class="step-label mt-2 text-[11px] leading-tight text-slate-500">Verification</p>
-          </li>
-        </ol>
-      </div>
-
-      <!-- Terminal -->
-      <div class="scanline relative overflow-hidden rounded-2xl border border-line bg-black/70 shadow-card">
-        <div class="flex items-center justify-between border-b border-line/80 px-5 py-3">
-          <div class="flex items-center gap-2">
-            <span class="h-2.5 w-2.5 rounded-full bg-red-500/80"></span>
-            <span class="h-2.5 w-2.5 rounded-full bg-amber-400/80"></span>
-            <span class="h-2.5 w-2.5 rounded-full bg-emerald-400/80"></span>
-            <span class="ml-2 text-[11px] text-slate-500">kubeagent@sre — neural stream</span>
-          </div>
-          <div class="flex items-center gap-3">
-            <span id="stream-target" class="text-[10px] text-slate-600">no incident selected</span>
-            <button id="clear-terminal" class="rounded-md border border-line p-1.5 text-slate-500 transition hover:border-emerald-500/40 hover:text-emerald-300" title="Clear terminal">
-              <i data-lucide="eraser" class="h-3.5 w-3.5"></i>
-            </button>
-          </div>
-        </div>
-
-        <div id="terminal" class="terminal-scroll h-[420px] space-y-1.5 overflow-y-auto bg-black/40 px-5 py-4 text-[12.5px] leading-relaxed text-emerald-300 sm:text-[13px]">
-          <div class="text-slate-500">
-            <span class="text-emerald-500">$</span> kubeagent watch --namespace default
-          </div>
-          <div class="cursor text-slate-600">waiting for an incident stream…</div>
+      <div class="scanline relative flex-1 overflow-hidden bg-[#060911]">
+        <div id="terminal" class="terminal-scroll absolute inset-0 overflow-y-auto p-4 font-mono text-[12px] leading-relaxed text-slate-300 space-y-1.5 select-text">
+          <div class="text-slate-500"><span class="text-emerald-500">$</span> kubeagent watch --namespace default</div>
+          <div class="text-slate-600">waiting for an incident stream…</div>
         </div>
       </div>
 
-      <p class="px-1 text-[10px] leading-relaxed text-slate-600">
-        Stream endpoint: <code class="text-slate-500">GET /api/v1/incidents/&lt;id&gt;/stream</code> ·
-        Auto-reconnects with exponential backoff · Simulation mode never touches a live cluster.
+      <form id="cli-form" class="border-t border-sre-border bg-black/40 px-3 py-2">
+        <div class="flex items-center gap-2 font-mono text-[11.5px]">
+          <span class="shrink-0 text-emerald-500">kubeagent@sre $</span>
+          <input id="cli-input"
+                 class="min-w-0 flex-1 bg-transparent text-slate-200 placeholder:text-slate-600 focus:outline-none"
+                 placeholder="status · inspect pod/<name> · runbooks list · policy"
+                 autocomplete="off" spellcheck="false">
+        </div>
+      </form>
+
+      <p class="border-t border-sre-border px-4 py-2 text-[10px] font-mono text-slate-600">
+        GET /api/v1/incidents/&lt;id&gt;/stream · <a href="/metrics" target="_blank" class="text-sky-400/80 hover:underline">/metrics</a> · auto-reconnect with backoff · simulation never touches a live cluster
       </p>
+    </section>
+
+    <!-- ---------- RIGHT: HITL APPROVAL + RCA ---------- -->
+    <section class="flex flex-col gap-3 xl:col-span-3">
+
+      <!-- Human-in-the-loop gate -->
+      <div id="approval-banner" class="hidden bg-sre-surface border-2 border-amber-500/40 rounded-lg p-3">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[11px] font-mono font-bold text-amber-400 flex items-center gap-1.5">
+            <i data-lucide="shield-alert" class="w-4 h-4"></i> SRE Action Required
+          </span>
+          <span class="text-[10px] font-mono text-slate-400">HITL Gate</span>
+        </div>
+
+        <p class="text-xs text-slate-200 mb-2">
+          Proposed change for
+          <span id="approval-namespace" class="font-mono text-sky-400">namespace</span>
+        </p>
+
+        <div class="bg-black/80 rounded p-2 text-[10.5px] font-mono mb-2 border border-slate-800 overflow-x-auto">
+          <div class="text-slate-400 mb-1">Proposed Patch</div>
+          <div id="patch-diff" class="space-y-1">
+            <div class="text-slate-500">no resource diff parsed</div>
+          </div>
+        </div>
+
+        <div class="bg-black/60 rounded p-2 text-[10.5px] font-mono mb-2 border border-slate-800 space-y-1">
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">Impact Analysis</span>
+            <span id="impact-risk" class="rounded px-1.5 py-0.5 font-bold bg-slate-500/20 text-slate-300">—</span>
+          </div>
+          <div id="impact-observed" class="text-slate-400">—</div>
+          <div id="impact-rationale" class="text-slate-500"></div>
+          <div id="impact-rollback" class="text-sky-300/80 break-all">rollback: —</div>
+        </div>
+
+        <div class="bg-black/80 rounded p-2 text-[10.5px] font-mono mb-2 border border-slate-800 overflow-x-auto">
+          <div class="text-slate-400 mb-1">commands recorded on approval:</div>
+          <div id="approval-commands" class="space-y-1 text-emerald-300"></div>
+        </div>
+
+        <div class="text-[10.5px] font-mono text-slate-400 space-y-1 mb-3">
+          <div>Blast radius: <span id="blast-radius" class="text-emerald-400 font-semibold">—</span></div>
+          <div>Primary action: <span id="approval-action" class="text-amber-200 font-semibold">—</span></div>
+          <div>Policy: <span class="text-emerald-400 font-semibold">explicit operator sign-off</span></div>
+        </div>
+
+        <div class="flex space-x-2">
+          <button id="approve-btn" class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-mono font-bold text-xs flex items-center justify-center gap-1 transition-all">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i> Approve Fix
+          </button>
+          <button id="reject-btn" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded font-mono text-xs transition-all">
+            Deny
+          </button>
+        </div>
+      </div>
+
+      <!-- RCA / post-mortem -->
+      <div class="bg-sre-surface border border-sre-border rounded-lg flex-1 flex flex-col p-3 overflow-hidden min-h-[240px]">
+        <div class="flex items-center justify-between mb-2 pb-2 border-b border-sre-border">
+          <span class="text-[11px] font-mono font-bold text-slate-300 flex items-center gap-1.5">
+            <i data-lucide="file-text" class="w-3.5 h-3.5 text-sky-400"></i> Post-Mortem Report
+          </span>
+          <span class="text-[10px] font-mono text-slate-500" id="rca-status">waiting</span>
+        </div>
+
+        <div class="flex-1 overflow-y-auto terminal-scroll text-[11px] font-mono text-slate-400 space-y-2">
+          <div><span class="text-slate-200 font-bold">Target:</span> <span id="rca-target">—</span></div>
+          <div><span class="text-slate-200 font-bold">Root Cause:</span> <span id="rca-root-cause">No diagnosis yet</span></div>
+          <div><span class="text-slate-200 font-bold">Remediation:</span> <span id="rca-remediation">—</span></div>
+          <div><span class="text-slate-200 font-bold">MTTR:</span> <span id="rca-mttr">—</span></div>
+          <div><span class="text-slate-200 font-bold">Confidence:</span> <span id="rca-confidence">—</span></div>
+        </div>
+
+        <div id="postmortem-bar" class="hidden mt-3 space-y-2">
+          <button id="postmortem-btn" class="w-full flex items-center justify-between rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-left transition hover:border-emerald-400/60 hover:bg-emerald-500/15">
+            <span class="flex items-center gap-2">
+              <i data-lucide="file-check-2" class="h-4 w-4 text-emerald-300"></i>
+              <span class="text-[11px] font-semibold text-emerald-100">Open full report</span>
+            </span>
+            <i data-lucide="arrow-up-right" class="h-3.5 w-3.5 text-emerald-300/70"></i>
+          </button>
+          <a id="postmortem-export" href="#" download
+             class="w-full flex items-center justify-between rounded border border-sre-border bg-black/40 px-3 py-2 text-[11px] font-mono text-slate-300 transition hover:border-sky-500/40 hover:text-sky-200">
+            <span class="flex items-center gap-2">
+              <i data-lucide="download" class="h-3.5 w-3.5 text-sky-300"></i>
+              Export .md
+            </span>
+            <span class="text-[10px] text-slate-500">markdown / print-to-PDF</span>
+          </a>
+        </div>
+      </div>
     </section>
   </main>
 
+  <!-- ================= COMMAND PALETTE ================= -->
+  <div id="command-palette"
+       class="fixed inset-0 z-[60] hidden items-start justify-center bg-black/60 p-4 pt-[10vh] backdrop-blur-md">
+    <div class="palette-panel transform-gpu w-full max-w-xl overflow-hidden rounded-xl border border-sre-border bg-sre-surface shadow-2xl">
+      <div class="flex items-center gap-3 border-b border-sre-border px-4 py-3">
+        <i data-lucide="search" class="h-4 w-4 shrink-0 text-slate-500"></i>
+        <input id="palette-input" type="text"
+               placeholder="Type a command or search…" autocomplete="off" spellcheck="false"
+               aria-label="Command palette search"
+               class="min-w-0 flex-1 bg-transparent font-mono text-[13px] text-slate-100 placeholder:text-slate-600 focus:outline-none">
+        <kbd class="rounded border border-sre-border bg-black/40 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">ESC</kbd>
+      </div>
+      <div id="palette-list" role="listbox" aria-label="Commands"
+           class="terminal-scroll max-h-[340px] overflow-y-auto p-1.5"></div>
+      <div class="flex items-center justify-between border-t border-sre-border px-4 py-2 font-mono text-[10px] text-slate-500">
+        <span>↑↓ navigate · ↵ execute · esc close</span>
+        <span id="palette-count">0 results</span>
+      </div>
+    </div>
+  </div>
+
   <!-- ================= POST-MORTEM MODAL ================= -->
   <div id="postmortem-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/80 p-3 backdrop-blur-sm sm:p-6">
-    <div class="flex h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-line bg-ink shadow-2xl">
-      <div class="flex items-center justify-between border-b border-line px-5 py-3">
+    <div class="flex h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-sre-border bg-sre-bg shadow-2xl">
+      <div class="flex items-center justify-between border-b border-sre-border px-5 py-3">
         <div class="flex items-center gap-2">
           <i data-lucide="file-text" class="h-4 w-4 text-emerald-400"></i>
           <h2 class="text-sm font-semibold text-slate-100">Post-Mortem Report</h2>
-          <span id="postmortem-id" class="text-[10px] text-slate-500"></span>
+          <span id="postmortem-id" class="text-[10px] font-mono text-slate-500"></span>
         </div>
         <div class="flex items-center gap-2">
           <a id="postmortem-download" href="#" download
-             class="rounded-md border border-line px-2.5 py-1.5 text-[11px] text-slate-400 transition hover:border-emerald-500/40 hover:text-emerald-300">
+             class="rounded border border-sre-border px-2.5 py-1.5 text-[11px] font-mono text-slate-400 transition hover:border-emerald-500/40 hover:text-emerald-300">
             Download .md
           </a>
           <button id="postmortem-close" aria-label="Close"
-                  class="rounded-md border border-line p-1.5 text-slate-400 transition hover:border-red-400/50 hover:text-red-300">
+                  class="rounded border border-sre-border p-1.5 text-slate-400 transition hover:border-rose-400/50 hover:text-rose-300">
             <i data-lucide="x" class="h-3.5 w-3.5"></i>
           </button>
         </div>
       </div>
-      <iframe id="postmortem-frame" title="Post-mortem report" class="h-full w-full flex-1 bg-ink"></iframe>
+      <iframe id="postmortem-frame" title="Post-mortem report" class="h-full w-full flex-1 bg-sre-bg"></iframe>
     </div>
   </div>
 
@@ -390,32 +463,39 @@
       return response.json();
     }
 
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+      }[char]));
+    }
+
     // ---------------------------------------------------------------- badges
     function setConnection(kind, label) {
       const badge = $("#connection-badge");
       const dot = $("#connection-dot");
       const text = $("#connection-text");
+      if (!badge) return;
       text.textContent = label;
       badge.className =
-        "ml-2 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium " +
+        "inline-flex items-center gap-2 rounded-full border px-3 py-1 font-medium " +
         {
           live: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
           sim: "border-amber-400/40 bg-amber-400/10 text-amber-300",
-          down: "border-red-400/40 bg-red-400/10 text-red-300",
+          down: "border-rose-400/40 bg-rose-400/10 text-rose-300",
         }[kind];
       dot.className =
         "inline-block h-2 w-2 rounded-full " +
-        { live: "bg-emerald-400 live-dot", sim: "bg-amber-400 live-dot", down: "bg-red-400" }[kind];
+        { live: "bg-emerald-400 live-dot", sim: "bg-amber-400 live-dot", down: "bg-rose-400" }[kind];
     }
 
     function severityBadge(incident) {
       if (incident.status === "RESOLVED") {
-        return '<span class="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold tracking-wide text-emerald-300">RESOLVED</span>';
+        return '<span class="rounded bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 text-[9.5px] font-bold tracking-wide">RESOLVED</span>';
       }
       if (incident.severity === "critical") {
-        return '<span class="rounded border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-bold tracking-wide text-red-300">CRITICAL</span>';
+        return '<span class="rounded bg-rose-500/20 text-rose-300 px-1.5 py-0.5 text-[9.5px] font-bold tracking-wide">CRITICAL</span>';
       }
-      return '<span class="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold tracking-wide text-amber-300">WARNING</span>';
+      return '<span class="rounded bg-amber-500/20 text-amber-300 px-1.5 py-0.5 text-[9.5px] font-bold tracking-wide">WARNING</span>';
     }
 
     function statusDot(status) {
@@ -428,6 +508,15 @@
       return `<span class="inline-block h-1.5 w-1.5 rounded-full ${tone}"></span>`;
     }
 
+    function statusTone(status) {
+      return {
+        OPEN: "border-amber-500/70",
+        INVESTIGATING: "border-sky-500/70",
+        AWAITING_APPROVAL: "border-amber-400/80",
+        RESOLVED: "border-emerald-500/70",
+      }[status] || "border-slate-600";
+    }
+
     // ---------------------------------------------------------------- render
     function renderHealth() {
       const health = state.health;
@@ -435,9 +524,14 @@
         $("#stat-pods").textContent = health.total_pods ?? "—";
         state.simulation = Boolean(health.simulation_mode);
         renderEngine();
+        document.querySelector("#cluster-label").textContent = state.simulation ? "simulated-cluster" : "live-cluster";
+        document.querySelector("#cluster-label").className = state.simulation ? "text-amber-300 font-bold" : "text-emerald-400 font-bold";
+        document.querySelector("#sim-label").textContent = state.simulation ? "ON (no cluster writes)" : "OFF (live collectors)";
       }
       const active = state.incidents.filter((incident) => incident.status !== "RESOLVED").length;
       $("#stat-incidents").textContent = active;
+      $("#queue-count").textContent = active;
+      renderMttr();
       if (state.source) {
         setConnection(state.simulation ? "sim" : "live", state.simulation ? "Simulation Mode" : "Connected");
       } else {
@@ -445,23 +539,38 @@
       }
     }
 
-    // ---------------------------------------------------------------- engine
-    // Makes the no-key fallback explicit instead of leaving the operator to
-    // wonder why the reasoning text looks deterministic.
+    // Average MTTR across resolved incidents, measured from their own timestamps.
+    function renderMttr() {
+      const resolved = state.incidents.filter((incident) => incident.status === "RESOLVED");
+      const durations = resolved
+        .map((incident) => (new Date(incident.updated_at) - new Date(incident.created_at)) / 1000)
+        .filter((seconds) => Number.isFinite(seconds) && seconds >= 0);
+      const target = $("#stat-mttr");
+      if (!durations.length) {
+        target.textContent = "—";
+        return;
+      }
+      const avg = durations.reduce((sum, value) => sum + value, 0) / durations.length;
+      target.textContent = `${avg.toFixed(1)}s avg`;
+    }
+
+    function mttrSeconds(incident) {
+      const seconds = (new Date(incident.updated_at) - new Date(incident.created_at)) / 1000;
+      return Number.isFinite(seconds) && seconds >= 0 ? `${seconds.toFixed(1)}s` : "—";
+    }
+
     function renderEngine() {
       const badge = $("#engine-badge");
       const text = $("#engine-text");
       if (!badge || !text) return;
       const llm = Boolean(state.health && state.health.llm_configured);
       const model = state.health && state.health.llm_model;
-      text.textContent = llm
-        ? `DeepSeek · ${model || "LLM"}`
-        : "Heuristic engine · no API key";
+      text.textContent = llm ? `DeepSeek · ${model || "LLM"}` : "Heuristic engine · no API key";
       badge.title = llm
         ? "LLM reasoning enabled (DEEPSEEK_API_KEY / LLM_API_KEY detected)"
         : "DEEPSEEK_API_KEY not set — using the built-in deterministic rule engine";
       badge.className =
-        "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium " +
+        "inline-flex items-center gap-2 rounded-full border px-3 py-1 font-medium " +
         (llm
           ? "border-sky-400/40 bg-sky-400/10 text-sky-300"
           : "border-slate-500/40 bg-slate-500/10 text-slate-300");
@@ -472,29 +581,28 @@
     function renderFeed() {
       const feed = $("#incident-feed");
       if (!state.incidents.length) {
-        feed.innerHTML = '<p class="px-5 py-8 text-center text-[11px] text-slate-600">No incidents yet — inject one above.</p>';
+        feed.innerHTML = '<p class="px-3 py-8 text-center text-[11px] font-mono text-slate-600">No incidents yet — inject one above.</p>';
         return;
       }
       feed.innerHTML = state.incidents
         .map((incident) => {
           const selected = incident.id === state.currentId;
           return `
-            <button data-incident="${incident.id}" class="feed-item w-full px-5 py-3.5 text-left transition ${
-              selected ? "bg-emerald-500/5" : "hover:bg-white/[0.02]"
+            <button data-incident="${incident.id}" class="feed-item w-full p-3 bg-sre-card border-l-4 ${statusTone(incident.status)} rounded text-left transition hover:bg-slate-700/40 ${
+              selected ? "ring-1 ring-sky-500/40" : ""
             }">
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <p class="truncate text-[12.5px] font-medium ${selected ? "text-emerald-200" : "text-slate-200"}">
-                    ${statusDot(incident.status)} ${escapeHtml(incident.title)}
-                  </p>
-                  <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-500">
-                    <span class="rounded bg-white/5 px-1.5 py-0.5">${escapeHtml(incident.namespace)}</span>
-                    <span>${escapeHtml(incident.source)}</span>
-                    <span>·</span>
-                    <span>${incident.status.replaceAll("_", " ")}</span>
-                  </p>
-                </div>
+              <div class="flex items-center justify-between gap-2 mb-1">
+                <span class="text-[11px] font-mono font-bold ${selected ? "text-white" : "text-slate-300"}">${escapeHtml(incident.id)}</span>
                 ${severityBadge(incident)}
+              </div>
+              <div class="text-[11.5px] font-semibold text-slate-200 truncate">${escapeHtml(incident.workload || incident.title)}</div>
+              <div class="mt-0.5 text-[10px] font-mono text-slate-500 truncate">${escapeHtml(incident.description || incident.title)}</div>
+              <div class="mt-1 text-[10px] font-mono text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-1">
+                ${statusDot(incident.status)}
+                <span>${escapeHtml(incident.status.replaceAll("_", " "))}</span>
+                <span>·</span>
+                <span>${escapeHtml(incident.namespace)}</span>
+                ${incident.status === "RESOLVED" ? `<span>· MTTR ${mttrSeconds(incident)}</span>` : ""}
               </div>
             </button>`;
         })
@@ -502,12 +610,6 @@
       feed.querySelectorAll("[data-incident]").forEach((button) => {
         button.addEventListener("click", () => selectIncident(button.dataset.incident));
       });
-    }
-
-    function escapeHtml(value) {
-      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
-        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-      }[char]));
     }
 
     // ---------------------------------------------------------------- steps
@@ -525,7 +627,7 @@
         "rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider " +
         (state.step === 5
           ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-          : "border-line bg-ink/60 text-slate-400");
+          : "border-sre-border bg-black/40 text-slate-400");
     }
 
     function resetSteps() {
@@ -546,7 +648,9 @@
       "agent.verification": "text-violet-300",
       "diagnosis.completed": "text-emerald-400",
       "approval.granted": "text-emerald-300",
-      error: "text-red-400",
+      error: "text-rose-400",
+      info: "text-slate-400",
+      cli: "text-emerald-300",
       ping: "text-slate-700",
     };
 
@@ -554,28 +658,33 @@
       const terminal = $("#terminal");
       const atBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 60;
       const line = document.createElement("div");
-      line.className = "flex gap-2";
+      line.className = "flex flex-col gap-0.5 border-b border-white/[0.03] pb-1 last:border-0 sm:flex-row sm:items-start sm:gap-2 sm:border-0 sm:pb-0";
 
       const time = document.createElement("span");
       time.className = "shrink-0 text-slate-600";
-      time.textContent = new Date().toLocaleTimeString("en-GB", { hour12: false });
+      time.textContent = new Date().toISOString().slice(11, 23) + "Z";
 
       const tag = document.createElement("span");
       tag.className = `shrink-0 font-semibold ${TAG_STYLES[kind] || "text-slate-400"}`;
       tag.textContent = `[${kind}]`;
 
       const body = document.createElement("span");
-      body.className = kind === "error" ? "text-red-300" : "text-slate-300";
+      body.className =
+        "min-w-0 flex-1 break-words " + (kind === "error" ? "text-rose-300" : "text-slate-300");
       body.textContent = message;
-      if (detail) {
-        const extra = document.createElement("span");
-        extra.className = "ml-2 text-slate-500";
-        extra.textContent = detail;
-        body.appendChild(extra);
-      }
 
-      line.append(time, tag, body);
+      const meta = document.createElement("span");
+      meta.className = "flex shrink-0 items-center gap-2";
+      meta.append(time, tag);
+
+      line.append(meta, body);
       terminal.appendChild(line);
+      if (detail) {
+        const extra = document.createElement("div");
+        extra.className = "pl-4 text-[11px] text-slate-500";
+        extra.textContent = `└── ${detail}`;
+        terminal.appendChild(extra);
+      }
       if (atBottom) terminal.scrollTop = terminal.scrollHeight;
     }
 
@@ -693,6 +802,7 @@
       if (index >= 0) state.incidents[index] = incident;
       else state.incidents.unshift(incident);
       renderApproval(incident);
+      renderRca(incident);
       renderFeed();
       renderHealth();
     }
@@ -701,14 +811,45 @@
       const incident = state.incidents.find((item) => item.id === state.currentId);
       if (incident && status) incident.status = status;
       renderApproval(incident);
+      renderRca(incident);
       renderHealth();
     }
 
-    // ---------------------------------------------------------------- approval
-    function renderPostmortem(incident) {
-      const bar = $("#postmortem-bar");
+    // ---------------------------------------------------------------- RCA + approval
+    function renderRca(incident) {
       const resolved = Boolean(incident) && incident.status === "RESOLVED";
-      bar.classList.toggle("hidden", !resolved);
+      $("#postmortem-bar").classList.toggle("hidden", !resolved);
+      $("#rca-target").textContent = incident ? (incident.workload || incident.title || "—") : "—";
+      $("#rca-status").textContent = incident ? incident.status.replaceAll("_", " ") : "waiting";
+
+      const diagnosis = incident && incident.diagnosis;
+      if (!diagnosis) {
+        $("#rca-root-cause").textContent = "No diagnosis yet";
+        $("#rca-remediation").textContent = "—";
+        $("#rca-mttr").textContent = "—";
+        $("#rca-confidence").textContent = "—";
+        return;
+      }
+      $("#rca-root-cause").textContent = diagnosis.root_cause || "—";
+      $("#rca-remediation").textContent =
+        (incident.approval && "Approved: " + incident.approval.approved_by) ||
+        ((diagnosis.commands || [])[0] || "No commands proposed");
+      const seconds = resolved
+        ? ((new Date(incident.updated_at) - new Date(incident.created_at)) / 1000).toFixed(1) + "s"
+        : "in progress";
+      $("#rca-mttr").textContent = seconds;
+      $("#rca-confidence").textContent =
+        diagnosis.confidence != null ? `${Math.round(diagnosis.confidence * 100)}% · ${diagnosis.generated_by || "agent"}` : "—";
+    }
+
+    function renderPostmortem(incident) {
+      const resolved = Boolean(incident) && incident.status === "RESOLVED";
+      $("#postmortem-bar").classList.toggle("hidden", !resolved);
+      const exportLink = $("#postmortem-export");
+      if (exportLink && incident) {
+        exportLink.href = `${API.postmortem(incident.id)}?format=markdown`;
+        exportLink.setAttribute("download", `${incident.id}-postmortem.md`);
+      }
     }
 
     function openPostmortem() {
@@ -729,6 +870,64 @@
       $("#postmortem-frame").src = "about:blank";
     }
 
+    // ---------------------------------------------------------------- ops data
+    // Patch and impact come from the backend so the UI never invents a value.
+    async function loadOps(incidentId) {
+      if (!incidentId || state.opsFor === incidentId) return;
+      state.opsFor = incidentId;
+      try {
+        renderPatch(await api(`/api/v1/incidents/${incidentId}/patch`));
+      } catch (error) {
+        appendTerminal("error", `patch preview unavailable: ${error.message}`);
+      }
+      try {
+        renderImpact(await api(`/api/v1/incidents/${incidentId}/impact`));
+      } catch (error) {
+        appendTerminal("error", `impact analysis unavailable: ${error.message}`);
+      }
+    }
+
+    function renderPatch(patch) {
+      const target = $("#patch-diff");
+      if (!target || !patch) return;
+      if (!patch.available || !patch.diff.length) {
+        target.innerHTML = `<div class="text-slate-500">${escapeHtml(patch.note || "No declarative patch for this diagnosis.")}</div>`;
+        return;
+      }
+      target.innerHTML = patch.diff
+        .map(({ type, text }) => {
+          const tone =
+            type === "add"
+              ? "text-emerald-400 bg-emerald-500/10"
+              : type === "del"
+                ? "text-rose-400 bg-rose-500/10"
+                : "text-slate-400";
+          return `<div class="whitespace-pre px-1 ${tone}">${escapeHtml(text)}</div>`;
+        })
+        .join("");
+    }
+
+    function renderImpact(impact) {
+      if (!impact) return;
+      const risk = impact.risk || "—";
+      const badge = $("#impact-risk");
+      badge.textContent = risk;
+      badge.className =
+        "rounded px-1.5 py-0.5 font-bold " +
+        ({
+          LOW: "bg-emerald-500/20 text-emerald-300",
+          MEDIUM: "bg-amber-500/20 text-amber-300",
+          HIGH: "bg-rose-500/20 text-rose-300",
+        }[risk] || "bg-slate-500/20 text-slate-300");
+      const observed = impact.observed || {};
+      $("#impact-observed").textContent =
+        `${observed.unhealthy_target_pods ?? 0}/${observed.target_pods ?? 0} target pods unhealthy · ` +
+        `${observed.namespace_pods ?? "?"} pods in ns/${impact.namespace}`;
+      $("#impact-rationale").textContent = (impact.rationale || [])[0] || "—";
+      $("#impact-rollback").textContent = impact.rollback ? `rollback: ${impact.rollback}` : "rollback: n/a";
+      $("#blast-radius").textContent = impact.target ? `${impact.target} · ns/${impact.namespace}` : "no resource targeted";
+    }
+
     function renderApproval(incident) {
       renderPostmortem(incident);
       const banner = $("#approval-banner");
@@ -736,10 +935,71 @@
         banner.classList.add("hidden");
         return;
       }
-      const action = incident.diagnosis?.commands?.[0] || incident.diagnosis?.recommended_actions?.[0] || "Apply the proposed remediation";
+      const diagnosis = incident.diagnosis || {};
+      const commands = diagnosis.commands || [];
+      const action =
+        commands[0] || (diagnosis.recommended_actions || [])[0] || "Apply the proposed remediation";
       $("#approval-action").textContent = action;
+      loadOps(incident.id);
+      $("#approval-namespace").textContent = incident.workload || incident.namespace;
+      $("#approval-commands").innerHTML = (commands.length ? commands : ["(no commands proposed)"])
+        .map((command) => `<div class="break-all">$ ${escapeHtml(command)}</div>`)
+        .join("");
       banner.classList.remove("hidden");
       if (window.lucide) window.lucide.createIcons();
+    }
+
+    // ---------------------------------------------------------------- policy
+    async function loadPolicy() {
+      try {
+        state.policy = await api("/api/v1/policy");
+        renderPolicy();
+      } catch (error) {
+        appendTerminal("error", `cannot read safety policy: ${error.message}`);
+      }
+    }
+
+    function renderPolicy() {
+      const policy = state.policy;
+      if (!policy) return;
+      $("#policy-readonly").checked = Boolean(policy.read_only);
+      $("#policy-protected").textContent = (policy.protected_namespaces || []).join(", ") || "none";
+      $("#policy-limit").textContent =
+        `${policy.approvals_in_window}/${policy.max_approvals_per_window} per ${Math.round(policy.window_seconds / 60)}m`;
+      const tag = $("#policy-state");
+      tag.textContent = policy.read_only ? "READ-ONLY" : "HITL ACTIVE";
+      tag.className =
+        "text-[10px] font-mono " + (policy.read_only ? "text-rose-300" : "text-emerald-300");
+      const note = $("#policy-note");
+      note.classList.toggle("hidden", !policy.read_only);
+      note.textContent = "Read-only: analysis runs, remediation approvals are rejected server-side.";
+    }
+
+    async function updatePolicy(patch) {
+      try {
+        state.policy = await api("/api/v1/policy", {
+          method: "PATCH",
+          body: JSON.stringify(patch),
+        });
+        renderPolicy();
+        appendTerminal("info", `safety policy updated: ${Object.keys(patch).join(", ")}`);
+      } catch (error) {
+        appendTerminal("error", `policy update failed: ${error.message}`);
+      }
+    }
+
+    // ---------------------------------------------------------------- CLI
+    async function runCli(command) {
+      appendTerminal("cli", `$ ${command}`);
+      try {
+        const result = await api("/api/v1/cli", {
+          method: "POST",
+          body: JSON.stringify({ command }),
+        });
+        result.output.split("\n").forEach((line) => appendTerminal("cli", line));
+      } catch (error) {
+        appendTerminal("error", `cli failed: ${error.message}`);
+      }
     }
 
     // ---------------------------------------------------------------- actions
@@ -748,6 +1008,11 @@
         state.incidents = await api(API.incidents);
         renderFeed();
         renderHealth();
+        const current = state.incidents.find((item) => item.id === state.currentId);
+        if (current) {
+          renderApproval(current);
+          renderRca(current);
+        }
       } catch (error) {
         appendTerminal("error", `cannot list incidents: ${error.message}`);
       }
@@ -763,19 +1028,20 @@
       if (incident) {
         applyStatus(incident.status);
         renderApproval(incident);
+        renderRca(incident);
       } else {
         renderPostmortem(null);
       }
       $("#terminal").innerHTML = "";
       connectStream(incidentId);
+      loadOps(incidentId);
     }
 
     async function triggerScenario(scenario, button) {
       const status = $("#injector-status");
       status.classList.remove("hidden");
       status.textContent = `Injecting ${scenario}…`;
-      button.disabled = true;
-      button.classList.add("opacity-60");
+      if (button) button.disabled = true;
       try {
         const payload = await api(API.simulate, {
           method: "POST",
@@ -787,8 +1053,7 @@
       } catch (error) {
         status.textContent = `Injection failed: ${error.message}`;
       } finally {
-        button.disabled = false;
-        button.classList.remove("opacity-60");
+        if (button) button.disabled = false;
       }
     }
 
@@ -801,8 +1066,7 @@
         });
         appendTerminal("approval.granted", "remediation approved by operator");
         await refreshIncidents();
-        const incident = state.incidents.find((item) => item.id === state.currentId);
-        renderApproval(incident);
+        renderApproval(state.incidents.find((item) => item.id === state.currentId));
       } catch (error) {
         appendTerminal("error", `approval failed: ${error.message}`);
       }
@@ -818,6 +1082,181 @@
       } catch (error) {
         appendTerminal("error", `rejection failed: ${error.message}`);
       }
+    }
+
+    // ---------------------------------------------------------------- palette
+    const PALETTE_EXTRAS = [
+      {
+        id: "metrics",
+        label: "Open: Prometheus /metrics",
+        hint: "observability",
+        keywords: "metrics prometheus scrape grafana",
+        run: () => window.open("/metrics", "_blank", "noopener"),
+      },
+      {
+        id: "readonly",
+        label: "Toggle: read-only diagnostic mode",
+        hint: "safety policy",
+        keywords: "policy safety readonly guardrail",
+        run: () => updatePolicy({ read_only: !(state.policy && state.policy.read_only) }),
+      },
+    ];
+
+    let paletteIndex = 0;
+    let paletteMatches = [];
+
+    function paletteItems() {
+      const incident = state.incidents.find((item) => item.id === state.currentId);
+      const target = incident && (incident.workload || incident.namespace);
+      return [
+        {
+          id: "sim-oom",
+          label: "Simulate: OOMKilled Java Service",
+          hint: "chaos · P1",
+          keywords: "simulate inject oom kill java memory crashloop",
+          run: () => triggerScenario("OOMKilled"),
+        },
+        {
+          id: "sim-zombie",
+          label: "Simulate: Zombie PID Leak",
+          hint: "chaos · P2",
+          keywords: "simulate inject zombie pid leak defunct process",
+          run: () => triggerScenario("Zombie_Process_Leak"),
+        },
+        {
+          id: "inspect",
+          label: `Inspect: ${target || "payment-service-7f9b8c"}`,
+          hint: "sre cli",
+          keywords: "inspect describe pod logs detail",
+          run: () => inspectCurrentTarget(target),
+        },
+        {
+          id: "restart",
+          label: "Action: Force Rolling Restart",
+          hint: "approval required",
+          keywords: "restart rollout deployment action remediate",
+          run: () => requestRollingRestart(),
+        },
+        {
+          id: "export",
+          label: "Export: Post-Mortem Report (Markdown)",
+          hint: "report",
+          keywords: "export download postmortem rca markdown report",
+          run: () => exportPostmortem(),
+        },
+        ...PALETTE_EXTRAS,
+      ];
+    }
+
+    function fuzzyScore(query, item) {
+      const needle = query.trim().toLowerCase();
+      if (!needle) return 1;
+      const haystack = `${item.label} ${item.keywords}`.toLowerCase();
+      const direct = haystack.indexOf(needle);
+      if (direct >= 0) return 1000 - direct;
+      let score = 0;
+      let cursor = 0;
+      for (const char of needle) {
+        const found = haystack.indexOf(char, cursor);
+        if (found === -1) return 0;
+        score += found === cursor ? 3 : 1;
+        cursor = found + 1;
+      }
+      return score;
+    }
+
+    function renderPalette(query) {
+      paletteMatches = paletteItems()
+        .map((item) => ({ item, score: fuzzyScore(query, item) }))
+        .filter((entry) => entry.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map((entry) => entry.item);
+      paletteIndex = Math.min(paletteIndex, Math.max(paletteMatches.length - 1, 0));
+      $("#palette-count").textContent = `${paletteMatches.length} result${paletteMatches.length === 1 ? "" : "s"}`;
+      $("#palette-list").innerHTML = paletteMatches.length
+        ? paletteMatches
+            .map(
+              (item, index) => `
+              <button type="button" data-palette="${index}" role="option" aria-selected="${index === paletteIndex}"
+                class="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
+                  index === paletteIndex
+                    ? "bg-sky-500/10 text-sky-100"
+                    : "text-slate-300 hover:bg-white/[0.04]"
+                }">
+                <span class="min-w-0 truncate text-[12.5px]">${escapeHtml(item.label)}</span>
+                <span class="shrink-0 font-mono text-[10px] text-slate-500">${escapeHtml(item.hint || "")}</span>
+              </button>`
+            )
+            .join("")
+        : '<p class="px-3 py-6 text-center font-mono text-[11px] text-slate-500">No matching commands.</p>';
+      document.querySelectorAll("[data-palette]").forEach((node) => {
+        node.addEventListener("click", () => executePalette(Number(node.dataset.palette)));
+      });
+    }
+
+    function openPalette() {
+      const palette = $("#command-palette");
+      palette.classList.remove("hidden");
+      palette.classList.add("flex");
+      const input = $("#palette-input");
+      input.value = "";
+      paletteIndex = 0;
+      renderPalette("");
+      requestAnimationFrame(() => input.focus());
+    }
+
+    function closePalette() {
+      const palette = $("#command-palette");
+      palette.classList.add("hidden");
+      palette.classList.remove("flex");
+    }
+
+    function executePalette(index) {
+      const item = paletteMatches[index];
+      if (!item) return;
+      closePalette();
+      appendTerminal("info", `palette → ${item.label}`);
+      Promise.resolve()
+        .then(() => item.run())
+        .catch((error) => appendTerminal("error", `command failed: ${error.message}`));
+    }
+
+    async function inspectCurrentTarget(target) {
+      if (!target) {
+        appendTerminal("info", "select an incident before inspecting a pod");
+        return;
+      }
+      appendTerminal("info", `inspecting ${target} via the read-only SRE CLI`);
+      await runCli(`kubeagent inspect pod/${target}`);
+    }
+
+    function requestRollingRestart() {
+      const incident = state.incidents.find((item) => item.id === state.currentId);
+      if (!incident) {
+        appendTerminal("info", "select an incident before requesting a rolling restart");
+        return;
+      }
+      if (incident.status !== "AWAITING_APPROVAL") {
+        appendTerminal(
+          "info",
+          `no restart is awaiting approval: incident is ${incident.status.replaceAll("_", " ").toLowerCase()}`
+        );
+        return;
+      }
+      const banner = $("#approval-banner");
+      banner.scrollIntoView({ behavior: "smooth", block: "center" });
+      banner.classList.add("ring-2", "ring-amber-400/60");
+      setTimeout(() => banner.classList.remove("ring-2", "ring-amber-400/60"), 1800);
+      appendTerminal("info", "rolling restart is approval-gated — review the patch and approve in the HITL card");
+    }
+
+    function exportPostmortem() {
+      const incident = state.incidents.find((item) => item.id === state.currentId);
+      if (!incident) {
+        appendTerminal("info", "select an incident to export its post-mortem");
+        return;
+      }
+      window.open(`${API.postmortem(incident.id)}?format=markdown`, "_blank", "noopener");
     }
 
     // ---------------------------------------------------------------- boot
@@ -838,6 +1277,61 @@
       });
       $("#clear-terminal").addEventListener("click", () => {
         $("#terminal").innerHTML = '<div class="text-slate-600">terminal cleared</div>';
+      });
+      $("#cli-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const input = $("#cli-input");
+        const command = input.value.trim();
+        if (!command) return;
+        input.value = "";
+        runCli(command);
+      });
+      $("#policy-readonly").addEventListener("change", (event) =>
+        updatePolicy({ read_only: event.target.checked })
+      );
+      $("#policy-edit").addEventListener("click", () => {
+        const current = (state.policy && state.policy.protected_namespaces) || [];
+        const next = window.prompt("Protected namespaces (comma separated):", current.join(", "));
+        if (next === null) return;
+        updatePolicy({
+          protected_namespaces: next.split(",").map((item) => item.trim()).filter(Boolean),
+        });
+      });
+
+      // Command palette: button, click-away, arrows/enter/escape, ⌘K / Ctrl+K.
+      $("#palette-open").addEventListener("click", openPalette);
+      $("#command-palette").addEventListener("click", (event) => {
+        if (event.target.id === "command-palette") closePalette();
+      });
+      $("#palette-input").addEventListener("input", (event) => {
+        paletteIndex = 0;
+        renderPalette(event.target.value);
+      });
+      $("#palette-input").addEventListener("keydown", (event) => {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          paletteIndex = Math.min(paletteIndex + 1, Math.max(paletteMatches.length - 1, 0));
+          renderPalette($("#palette-input").value);
+        } else if (event.key === "ArrowUp") {
+          event.preventDefault();
+          paletteIndex = Math.max(paletteIndex - 1, 0);
+          renderPalette($("#palette-input").value);
+        } else if (event.key === "Enter") {
+          event.preventDefault();
+          executePalette(paletteIndex);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          closePalette();
+        }
+      });
+      document.addEventListener("keydown", (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+          event.preventDefault();
+          if ($("#command-palette").classList.contains("hidden")) openPalette();
+          else closePalette();
+        } else if (event.key === "Escape" && !$("#command-palette").classList.contains("hidden")) {
+          closePalette();
+        }
       });
       window.addEventListener("beforeunload", closeStream);
       document.addEventListener("visibilitychange", () => {
@@ -862,6 +1356,7 @@
       } catch (error) {
         appendTerminal("error", `cannot read cluster health: ${error.message}`);
       }
+      await loadPolicy();
       await refreshIncidents();
       renderHealth();
       if (state.incidents.length) {
