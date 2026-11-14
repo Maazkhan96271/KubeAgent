@@ -156,7 +156,8 @@
         </div>
         <div class="flex items-center gap-2">
           <span class="text-slate-400">MODE:</span>
-          <span class="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 font-semibold">HITL_GUARDED</span>
+          <span id="mode-badge" title="Derived from the safety policy matrix"
+                class="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 font-semibold">HITL_GUARDED</span>
         </div>
 
         <span id="engine-badge"
@@ -250,7 +251,9 @@
           <span class="text-[11px] font-mono font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
             <i data-lucide="zap" class="w-3.5 h-3.5 text-amber-400"></i> Chaos Injector
           </span>
-          <span class="text-[10px] font-mono text-slate-500">live sandbox</span>
+          <button id="chaos-open" class="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-mono text-amber-200 transition hover:border-amber-400/70 hover:bg-amber-500/20">
+            ⚙ Playground
+          </button>
         </div>
         <div class="grid grid-cols-1 gap-2">
           <button data-scenario="OOMKilled" class="trigger w-full text-left px-3 py-2 bg-sre-card hover:bg-slate-700/60 border border-sre-border rounded text-xs font-mono flex items-center justify-between transition-all disabled:opacity-60">
@@ -273,7 +276,7 @@
         <p id="injector-status" class="mt-2 hidden rounded border border-sre-border bg-black/40 px-2 py-1.5 text-[10.5px] font-mono text-slate-400"></p>
       </div>
 
-      <!-- Safety policy -->
+      <!-- Safety policy matrix -->
       <div class="bg-sre-surface border border-sre-border rounded-lg p-3">
         <div class="flex items-center justify-between mb-2">
           <span class="text-[11px] font-mono font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
@@ -281,12 +284,34 @@
           </span>
           <span id="policy-state" class="text-[10px] font-mono text-emerald-300">HITL ACTIVE</span>
         </div>
-        <label class="flex items-center justify-between gap-2 text-[10.5px] font-mono text-slate-400">
-          Read-only diagnostic mode
-          <input id="policy-readonly" type="checkbox"
-                 class="h-4 w-8 cursor-pointer appearance-none rounded-full bg-slate-600 transition-colors checked:bg-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60">
-        </label>
-        <div class="mt-1.5 flex items-center justify-between text-[10px] font-mono text-slate-500">
+
+        <div class="space-y-2">
+          <label class="flex cursor-pointer items-start justify-between gap-2 text-[10.5px] font-mono text-slate-400">
+            <span>Require human approval<br><span class="text-[9px] text-slate-600">production namespace</span></span>
+            <input id="policy-require-approval" type="checkbox"
+                   class="mt-0.5 h-4 w-8 shrink-0 cursor-pointer appearance-none rounded-full bg-slate-600 transition-colors checked:bg-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60">
+          </label>
+
+          <label class="flex cursor-pointer items-start justify-between gap-2 text-[10.5px] font-mono text-slate-400">
+            <span>Auto-rollback<br><span class="text-[9px] text-slate-600">on health check failure</span></span>
+            <input id="policy-auto-rollback" type="checkbox"
+                   class="mt-0.5 h-4 w-8 shrink-0 cursor-pointer appearance-none rounded-full bg-slate-600 transition-colors checked:bg-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60">
+          </label>
+
+          <label class="flex cursor-pointer items-start justify-between gap-2 text-[10.5px] font-mono text-slate-400">
+            <span>Strict dry-run only<br><span class="text-[9px] text-slate-600">diagnostics, no remediation</span></span>
+            <input id="policy-dry-run" type="checkbox"
+                   class="mt-0.5 h-4 w-8 shrink-0 cursor-pointer appearance-none rounded-full bg-slate-600 transition-colors checked:bg-rose-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/60">
+          </label>
+
+          <label class="flex items-center justify-between gap-2 text-[10.5px] font-mono text-slate-400">
+            <span>Max concurrent<br><span class="text-[9px] text-slate-600">pod restarts</span></span>
+            <input id="policy-max-restarts" type="number" min="1" max="10" step="1" value="2"
+                   class="w-14 rounded border border-sre-border bg-black/40 px-2 py-1 text-right font-mono text-[11px] text-slate-200 focus:border-sky-500/60 focus:outline-none">
+          </label>
+        </div>
+
+        <div class="mt-2 flex items-center justify-between text-[10px] font-mono text-slate-500">
           <span>Protected: <span id="policy-protected" class="text-slate-300">—</span></span>
           <button id="policy-edit" class="text-sky-400 hover:underline">edit</button>
         </div>
@@ -567,6 +592,71 @@
         </div>
       </div>
       <iframe id="postmortem-frame" title="Post-mortem report" class="h-full w-full flex-1 bg-sre-bg"></iframe>
+    </div>
+  </div>
+
+  <!-- ================= CHAOS PLAYGROUND ================= -->
+  <div id="chaos-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 p-3 backdrop-blur-sm sm:p-6">
+    <div class="w-full max-w-lg overflow-hidden rounded-xl border border-sre-border bg-sre-surface shadow-2xl">
+      <div class="flex items-center justify-between border-b border-sre-border px-5 py-3">
+        <div class="flex items-center gap-2">
+          <i data-lucide="flask-conical" class="h-4 w-4 text-amber-400"></i>
+          <h2 class="shrink-0 text-sm font-semibold text-slate-100">Chaos Playground</h2>
+          <span class="hidden text-[10px] font-mono text-slate-500 sm:inline">synthetic · no cluster writes</span>
+        </div>
+        <button id="chaos-close" aria-label="Close chaos playground"
+                class="rounded border border-sre-border p-1.5 text-slate-400 transition hover:border-rose-400/50 hover:text-rose-300">
+          <i data-lucide="x" class="h-3.5 w-3.5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-4 px-5 py-4 font-mono">
+        <div>
+          <div class="mb-1 flex items-center justify-between text-[10.5px] uppercase tracking-wider text-slate-400">
+            <span>Memory leak rate</span>
+            <span id="chaos-mem-rate-value" class="font-bold text-amber-300">60 MB/s</span>
+          </div>
+          <input id="chaos-mem-rate" type="range" min="10" max="100" step="5" value="60"
+                 class="w-full accent-amber-400" aria-label="Memory leak rate in MB per second">
+          <div class="mt-0.5 flex justify-between text-[9px] text-slate-600"><span>10 MB/s</span><span>100 MB/s</span></div>
+        </div>
+
+        <label class="block">
+          <span class="mb-1 block text-[10.5px] uppercase tracking-wider text-slate-400">Chaos target</span>
+          <select id="chaos-target"
+                  class="w-full rounded border border-sre-border bg-black/40 px-3 py-2 text-[11.5px] text-slate-200 focus:border-amber-500/60 focus:outline-none">
+            <option value="payment-service">Payment Service</option>
+            <option value="redis-cache">Redis</option>
+            <option value="auth-service">Auth API</option>
+            <option value="random">Random Pod</option>
+          </select>
+        </label>
+
+        <label class="flex cursor-pointer items-center justify-between gap-3">
+          <span class="text-[10.5px] uppercase tracking-wider text-slate-400">
+            Packet drop injection<br>
+            <span class="text-[9px] normal-case text-slate-600">simulated dropped SYN packets</span>
+          </span>
+          <span class="flex items-center gap-2">
+            <span id="chaos-packet-value" class="w-9 text-right text-[11px] font-bold text-slate-400">0%</span>
+            <input id="chaos-packet-toggle" type="checkbox"
+                   class="h-4 w-8 shrink-0 cursor-pointer appearance-none rounded-full bg-slate-600 transition-colors checked:bg-rose-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/60">
+          </span>
+        </label>
+
+        <div class="rounded border border-sre-border bg-black/40 px-3 py-2 text-[10.5px] leading-relaxed text-slate-400">
+          <div class="mb-1 text-[9.5px] uppercase tracking-wider text-slate-600">Scenario preview</div>
+          <div id="chaos-summary" class="text-slate-200">60 MB/s memory leak · payment-service · 0% SYN drop</div>
+        </div>
+
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <span id="chaos-status" class="order-2 min-w-0 flex-1 text-[10px] leading-relaxed text-slate-500 sm:order-1">Targets are simulated pods; nothing is written to a real cluster.</span>
+          <button id="chaos-launch"
+                  class="order-1 w-full shrink-0 rounded bg-rose-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-rose-500 disabled:opacity-60 sm:order-2 sm:w-auto">
+            💥 Launch Custom Chaos Scenario
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1107,17 +1197,45 @@
     function renderPolicy() {
       const policy = state.policy;
       if (!policy) return;
-      $("#policy-readonly").checked = Boolean(policy.read_only);
+      $("#policy-require-approval").checked = Boolean(policy.require_human_approval_production);
+      $("#policy-auto-rollback").checked = Boolean(policy.auto_rollback_on_health_check_failure);
+      $("#policy-dry-run").checked = Boolean(policy.read_only);
+      $("#policy-max-restarts").value = policy.max_concurrent_pod_restarts ?? 2;
       $("#policy-protected").textContent = (policy.protected_namespaces || []).join(", ") || "none";
       $("#policy-limit").textContent =
         `${policy.approvals_in_window}/${policy.max_approvals_per_window} per ${Math.round(policy.window_seconds / 60)}m`;
       const tag = $("#policy-state");
-      tag.textContent = policy.read_only ? "READ-ONLY" : "HITL ACTIVE";
+      tag.textContent = policy.read_only ? "DRY-RUN ONLY" : "HITL ACTIVE";
       tag.className =
         "text-[10px] font-mono " + (policy.read_only ? "text-rose-300" : "text-emerald-300");
       const note = $("#policy-note");
-      note.classList.toggle("hidden", !policy.read_only);
-      note.textContent = "Read-only: analysis runs, remediation approvals are rejected server-side.";
+      if (policy.read_only) {
+        note.classList.remove("hidden");
+        note.textContent =
+          "Strict dry-run: analysis runs, remediation approvals are rejected server-side.";
+      } else if (policy.require_human_approval_production === false) {
+        note.classList.remove("hidden");
+        note.textContent =
+          "Production approvals are ungated — the agent may remediate without human sign-off.";
+      } else {
+        note.classList.add("hidden");
+      }
+      renderModeBadge();
+    }
+
+    function renderModeBadge() {
+      const badge = $("#mode-badge");
+      const policy = state.policy || {};
+      if (!badge) return;
+      const autonomous =
+        policy.read_only === false && policy.require_human_approval_production === false;
+      badge.textContent = autonomous ? "AUTONOMOUS" : "HITL_GUARDED";
+      badge.className = autonomous
+        ? "px-2 py-0.5 rounded bg-rose-500/15 border border-rose-500/40 text-rose-300 font-semibold"
+        : "px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 font-semibold";
+      badge.title = autonomous
+        ? "Safety policy allows unattended remediation"
+        : "Safety policy requires a human approval gate";
     }
 
     async function updatePolicy(patch) {
@@ -1934,8 +2052,109 @@
       if (aiTrace) renderAiTrace(activeIncident());
     }
 
+    // ---------------------------------------------------------------- chaos playground
+    const CHAOS_TARGETS = {
+      "payment-service": { label: "Payment Service", node: "node-us-east-1c" },
+      "redis-cache": { label: "Redis", node: "node-us-east-1a" },
+      "auth-service": { label: "Auth API", node: "node-us-east-1a" },
+    };
+
+    function chaosConfig() {
+      return {
+        rate: Number($("#chaos-mem-rate").value),
+        target: $("#chaos-target").value,
+        packetDrop: $("#chaos-packet-toggle").checked ? 50 : 0,
+      };
+    }
+
+    function renderChaosSummary() {
+      const { rate, target, packetDrop } = chaosConfig();
+      const resolved = target === "random" ? "random pod" : CHAOS_TARGETS[target].label;
+      $("#chaos-mem-rate-value").textContent = `${rate} MB/s`;
+      const packetValue = $("#chaos-packet-value");
+      packetValue.textContent = `${packetDrop}%`;
+      packetValue.classList.toggle("text-rose-300", packetDrop > 0);
+      packetValue.classList.toggle("text-slate-400", packetDrop === 0);
+      $("#chaos-summary").textContent =
+        `${rate} MB/s memory leak · ${resolved} · ${packetDrop}% SYN drop`;
+    }
+
+    function openChaosModal() {
+      const modal = $("#chaos-modal");
+      modal.classList.remove("hidden");
+      modal.classList.add("flex");
+      $("#chaos-status").textContent =
+        "Targets are simulated pods; nothing is written to a real cluster.";
+      renderChaosSummary();
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    function closeChaosModal() {
+      const modal = $("#chaos-modal");
+      modal.classList.add("hidden");
+      modal.classList.remove("flex");
+    }
+
+    async function launchChaos() {
+      const button = $("#chaos-launch");
+      const status = $("#chaos-status");
+      const { rate, target, packetDrop } = chaosConfig();
+      const candidates = Object.keys(CHAOS_TARGETS);
+      const pod =
+        target === "random"
+          ? candidates[Math.floor(Math.random() * candidates.length)]
+          : target;
+      const { node, label } = CHAOS_TARGETS[pod];
+
+      button.disabled = true;
+      status.textContent = `injecting on ${pod}…`;
+      try {
+        const incident = await api(API.incidents, {
+          method: "POST",
+          body: JSON.stringify({
+            title: `Custom chaos: ${rate}MB/s memory leak on ${pod}`,
+            description:
+              `Chaos Playground injected a synthetic memory leak growing ${rate}MB/s on pod ${pod} ` +
+              `(${node})${packetDrop ? ` with ${packetDrop}% of SYN packets dropped` : ""}. ` +
+              "Expect cgroup pressure, climbing restarts and failing probes.",
+            namespace: "default",
+            workload: pod,
+            severity: "high",
+            source: "chaos-playground",
+            labels: {
+              memory_leak_rate_mb_s: String(rate),
+              packet_drop_percent: String(packetDrop),
+              node,
+              target_label: label,
+            },
+          }),
+        });
+        status.textContent = `incident ${incident.id} created · running agent…`;
+        appendTerminal(
+          "incident.created",
+          `custom chaos → ${pod} (${rate}MB/s leak, ${packetDrop}% SYN drop)`
+        );
+        await api(`/api/v1/incidents/${incident.id}/analyze`, { method: "POST" });
+        await refreshIncidents();
+        await selectIncident(incident.id);
+        status.textContent = `agent analyzed ${incident.id} — trace streaming`;
+        closeChaosModal();
+      } catch (error) {
+        status.textContent = `launch failed: ${error.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
     // ---------------------------------------------------------------- palette
     const PALETTE_EXTRAS = [
+      {
+        id: "chaos-playground",
+        label: "Open: Chaos Playground",
+        hint: "chaos · custom",
+        keywords: "chaos playground memory leak packet drop custom scenario",
+        run: openChaosModal,
+      },
       {
         id: "metrics",
         label: "Open: Prometheus /metrics",
@@ -2136,9 +2355,30 @@
         input.value = "";
         runCli(command);
       });
-      $("#policy-readonly").addEventListener("change", (event) =>
+      $("#policy-require-approval").addEventListener("change", (event) =>
+        updatePolicy({ require_human_approval_production: event.target.checked })
+      );
+      $("#policy-auto-rollback").addEventListener("change", (event) =>
+        updatePolicy({ auto_rollback_on_health_check_failure: event.target.checked })
+      );
+      $("#policy-dry-run").addEventListener("change", (event) =>
         updatePolicy({ read_only: event.target.checked })
       );
+      $("#policy-max-restarts").addEventListener("change", (event) => {
+        const value = Math.min(10, Math.max(1, Number(event.target.value) || 2));
+        event.target.value = value;
+        updatePolicy({ max_concurrent_pod_restarts: value });
+      });
+
+      $("#chaos-open").addEventListener("click", openChaosModal);
+      $("#chaos-close").addEventListener("click", closeChaosModal);
+      $("#chaos-modal").addEventListener("click", (event) => {
+        if (event.target.id === "chaos-modal") closeChaosModal();
+      });
+      $("#chaos-mem-rate").addEventListener("input", renderChaosSummary);
+      $("#chaos-target").addEventListener("change", renderChaosSummary);
+      $("#chaos-packet-toggle").addEventListener("change", renderChaosSummary);
+      $("#chaos-launch").addEventListener("click", launchChaos);
       $("#policy-edit").addEventListener("click", () => {
         const current = (state.policy && state.policy.protected_namespaces) || [];
         const next = window.prompt("Protected namespaces (comma separated):", current.join(", "));
@@ -2189,6 +2429,7 @@
           else closePalette();
         } else if (event.key === "Escape") {
           if (!$("#command-palette").classList.contains("hidden")) closePalette();
+          else if (!$("#chaos-modal").classList.contains("hidden")) closeChaosModal();
           else if (!$("#pod-drawer").classList.contains("translate-x-full")) closeDrawer();
         }
       });

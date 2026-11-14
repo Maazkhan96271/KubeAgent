@@ -40,6 +40,9 @@ class PolicyUpdate(BaseModel):
     read_only: bool | None = None
     protected_namespaces: list[str] | None = None
     max_approvals_per_window: int | None = Field(default=None, ge=1, le=50)
+    require_human_approval_production: bool | None = None
+    auto_rollback_on_health_check_failure: bool | None = None
+    max_concurrent_pod_restarts: int | None = Field(default=None, ge=1, le=10)
 
 
 @router.get("/policy", summary="Current SRE safety policy")
@@ -53,6 +56,9 @@ async def update_policy(payload: PolicyUpdate) -> dict[str, Any]:
         read_only=payload.read_only,
         protected_namespaces=payload.protected_namespaces,
         max_approvals_per_window=payload.max_approvals_per_window,
+        require_human_approval_production=payload.require_human_approval_production,
+        auto_rollback_on_health_check_failure=payload.auto_rollback_on_health_check_failure,
+        max_concurrent_pod_restarts=payload.max_concurrent_pod_restarts,
     )
 
 
