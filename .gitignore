@@ -111,3 +111,10 @@ pnpm-debug.log*
 ehthumbs.db
 Thumbs.db
 desktop.ini
+
+# --- Cluster credentials & local archives ---
+vke-config.yaml*
+*.zip
+*.ics
+hackerrank-orchestrate-december26-badge.gif
+test_app.py

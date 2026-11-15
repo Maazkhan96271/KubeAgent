@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeagent-deployment
+  labels:
+    app: kubeagent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubeagent
+  template:
+    metadata:
+      labels:
+        app: kubeagent
+    spec:
+      containers:
+      - name: kubeagent
+        image: maazkhan5/kubeagent:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        env:
+        - name: SIMULATION_MODE
+          value: "true"
+        - name: PORT
+          value: "8000"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10

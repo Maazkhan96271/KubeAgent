@@ -13,6 +13,11 @@ KubeAgent is one container serving four things from port `8000`:
 | `/api/v1/incidents/{id}/postmortem` | Markdown or `?format=html` RCA report |
 | `/healthz` | Liveness and readiness probe |
 
+> 🟢 **Active Live Deployment:**
+> * **Public Load Balancer IP:** [http://139.84.220.82](http://139.84.220.82)
+> * **Cluster Name:** `kubeagent-cluster`
+> * **Docker Image:** `maazkhan5/kubeagent:v1`
+
 ## 1. Prerequisites
 
 - A VKE cluster running Kubernetes **1.28+** (control plane is managed by

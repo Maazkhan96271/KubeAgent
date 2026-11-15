@@ -9,12 +9,16 @@
 [![DeepSeek](https://img.shields.io/badge/DeepSeek-Reasoning-4D6BFE)](https://www.deepseek.com)
 [![Linux](https://img.shields.io/badge/Linux-Host%20Collectors-FCC624?logo=linux&logoColor=black)](https://www.kernel.org)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org)
+[![Vultr VKE](https://img.shields.io/badge/Vultr-VKE%20Cluster-007BFC?logo=vultr&logoColor=white)](http://139.84.220.82)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](LICENSE)
 [![HackGlobal](https://img.shields.io/badge/HackGlobal-2026-8b5cf6)](https://github.com/Maazkhan96271/KubeAgent)
 
-[Quickstart](#-60-second-quickstart) · [How it works](#-how-it-works) · [Dashboard](#-mission-control-dashboard) · [API](#-api-reference) · [Deploy](#-production-deployment-vultr-kubernetes-engine) · [Security](#-security--safety-model) · [Demo script](DEMO_SCRIPT.md)
+[Live Demo (Vultr)](http://139.84.220.82) · [Quickstart](#-60-second-quickstart) · [How it works](#-how-it-works) · [Dashboard](#-mission-control-dashboard) · [API](#-api-reference) · [Deploy](#-production-deployment-vultr-kubernetes-engine) · [Security](#-security--safety-model) · [Demo script](DEMO_SCRIPT.md)
 
 </div>
+
+> 🌐 **Live Demo Deployed on Vultr Kubernetes Engine (VKE):** **[http://139.84.220.82](http://139.84.220.82)**  
+> *Active Cloud Load Balancer public IP on real VKE cluster `kubeagent-cluster`.*
 
 ---
 
@@ -343,6 +347,20 @@ manifests/
 ├── 04-service.yaml       # ClusterIP + Vultr LoadBalancer (commented nginx Ingress)
 ├── chaos-demo-pod.yaml   # pod that allocates 10MiB/s until OOMKilled
 └── helm/kubeagent/       # equivalent Helm chart (RBAC, config, deployment, service, chaos)
+```
+
+### 🟢 Live Verified Cluster Deployment
+KubeAgent is actively deployed and running live on **Vultr Kubernetes Engine (VKE)**:
+- **Public Web Dashboard:** [http://139.84.220.82](http://139.84.220.82)
+- **Docker Hub Container Image:** `maazkhan5/kubeagent:v1`
+- **Cluster:** `kubeagent-cluster` (VKE)
+- **Live Node:** `primary-pool-7fddbb3b20cb` (`Ready`, v1.37.2)
+
+```bash
+# Standalone VKE quick deploy
+kubectl apply -f manifests/deployment.yaml
+kubectl apply -f manifests/service.yaml
+kubectl get svc kubeagent-service
 ```
 
 One-shot install on Kubernetes 1.28+:
